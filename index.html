@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Trade Sniffer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    /* Zeigt sofort etwas – bevor JavaScript überhaupt lädt */
+    body { margin:0; background:#08090A; font-family:'Inter',sans-serif; color:#ECEAE5; }
+    #boot { display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    #boot-inner { text-align:center; }
+    #boot-logo { color:#3FC6C2; font-family:'Fraunces',serif; font-size:20px; letter-spacing:.08em; margin-bottom:12px; }
+    #boot-msg  { color:#8C8D90; font-size:14px; }
+    #err-box   { display:none; margin:20px auto; max-width:420px; background:#1A1B1D;
+                 border:1px solid #C9695A; border-radius:12px; padding:20px; color:#C9695A;
+                 font-size:13px; line-height:1.6; }
+  </style>
+</head>
+<body>
+
+<!-- Sichtbar BEVOR React geladen ist -->
+<div id="boot">
+  <div id="boot-inner">
+    <div id="boot-logo">⬡ TRADE SNIFFER</div>
+    <div id="boot-msg">Wird geladen …</div>
+    <div id="err-box"></div>
+  </div>
+</div>
+
+<div id="root"></div>
+
+<!-- React -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+
+<!-- Firebase Realtime Database (wie Stashify) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<script>
+import { jsxDEV as _jsxDEV, Fragment as _Fragment } from "react/jsx-dev-runtime";
+/* ================================================================
+   TRADE SNIFFER
+   ---------------------------------------------------------------
+   NUR DIESE 6 WERTE musst du anpassen.
+   Firebase Console → Projekteinstellungen → Deine Apps → Web
+   ================================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "HIER_DEINE_API_KEY",
+  authDomain: "HIER_DEINE_PROJEKTID.firebaseapp.com",
+  projectId: "HIER_DEINE_PROJEKTID",
+  storageBucket: "HIER_DEINE_PROJEKTID.appspot.com",
+  messagingSenderId: "HIER_DEINE_SENDER_ID",
+  appId: "HIER_DEINE_APP_ID",
+  databaseURL: "https://HIER_DEINE_PROJEKTID-default-rtdb.europe-west1.firebasedatabase.app"
+};
+/* ================================================================ */
+
+/* ---- Fehler sichtbar anzeigen statt schwarzer Seite ---- */
+function showError(msg) {
+  const b = document.getElementById("boot");
+  const e = document.getElementById("err-box");
+  if (b) b.style.display = "flex";
+  if (e) {
+    e.style.display = "block";
+    e.innerHTML = "⚠ " + msg;
+  }
+  document.getElementById("root").style.display = "none";
+}
+
+/* ---- Firebase ---- */
+let db;
+try {
+  firebase.initializeApp(FIREBASE_CONFIG);
+  db = firebase.database();
+} catch (e) {
+  showError("Firebase konnte nicht gestartet werden. Bitte prüfe deine Zugangsdaten in der index.html.<br><br>" + e.message);
+}
+async function dbGet(key) {
+  try {
+    const s = await db.ref("ts/" + key).once("value");
+    return s.val();
+  } catch {
+    return null;
+  }
+}
+async function dbSet(key, val) {
+  await db.ref("ts/" + key).set(val);
+}
+async function dbDel(key) {
+  await db.ref("ts/" + key).remove();
+}
+
+/* ---- React Hooks ---- */
+const {
+  useState,
+  useEffect
+} = React;
+
+/* ---- Passwort-Hash ---- */
+async function hashPw(pw) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/* ---- Marktdaten (Schnappschuss 30.06.2026) ---- */
+const SPARK = [100, 104, 101, 108, 112, 109, 118, 124, 121, 130];
+const AI_PICKS = [{
+  t: "NVDA",
+  c: 64,
+  n: "Rückgang vom Mai-Hoch; Hyperscaler-Zahlen könnten als Katalysator dienen."
+}, {
+  t: "ASML",
+  c: 83,
+  n: "Analysten heben Kursziele wegen starkem Auftragsbuch für GJ 2027 an."
+}, {
+  t: "LLY",
+  c: 81,
+  n: "Medicare-Abdeckung für Adipositas-Mittel und Fortschritte bei Foundayo."
+}];
+const NEWS = [{
+  t: "TSLA",
+  s: "pos",
+  x: "Morgan Stanley hebt Lieferprognose Q2 auf 413.000 Fahrzeuge an."
+}, {
+  t: "AMZN",
+  s: "pos",
+  x: "AWS erhöht KI-GPU-Preise bereits zum dritten Mal in Folge."
+}, {
+  t: "MSFT",
+  s: "pos",
+  x: "Microsoft sichert 20-Jahres-Stromvertrag mit Chevron für KI-Datacenter."
+}, {
+  t: "AAPL",
+  s: "neu",
+  x: "Apple erhöht Mac & iPad-Preise wegen angespannter Speicherchip-Lage."
+}];
+const WATCH = [{
+  t: "NVDA",
+  p: "198,32",
+  ch: 1.7
+}, {
+  t: "AAPL",
+  p: "281,74",
+  ch: -0.7
+}, {
+  t: "MSFT",
+  p: "371,00",
+  ch: 0.7
+}, {
+  t: "ASML",
+  p: "1.852",
+  ch: 4.9
+}];
+const MOVERS = {
+  g: {
+    t: "PLTR",
+    ch: 2.8
+  },
+  l: {
+    t: "SHOP",
+    ch: -2.3
+  }
+};
+const TAPE = [...WATCH, MOVERS.g, MOVERS.l];
+const INIT_W = [{
+  id: "ai",
+  type: "ai",
+  size: "large"
+}, {
+  id: "news",
+  type: "news",
+  size: "wide"
+}, {
+  id: "pf",
+  type: "pf",
+  size: "wide"
+}, {
+  id: "wl",
+  type: "wl",
+  size: "small"
+}, {
+  id: "mv",
+  type: "mv",
+  size: "small"
+}, {
+  id: "al",
+  type: "al",
+  size: "small"
+}];
+
+/* ---- Icons (inline SVG – keine externe Bibliothek) ---- */
+const I = ({
+  size = 16,
+  cl = "",
+  ch
+}) => /*#__PURE__*/_jsxDEV("svg", {
+  width: size,
+  height: size,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className: cl,
+  children: ch
+}, void 0, false);
+const Lock = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("rect", {
+    x: "3",
+    y: "11",
+    width: "18",
+    height: "11",
+    rx: "2"
+  }, "r", false), /*#__PURE__*/_jsxDEV("path", {
+    d: "M7 11V7a5 5 0 0 1 10 0v4"
+  }, "p", false)]
+}, void 0, false);
+const Eye = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+  }, "a", false), /*#__PURE__*/_jsxDEV("circle", {
+    cx: "12",
+    cy: "12",
+    r: "3"
+  }, "b", false)]
+}, void 0, false);
+const EyeOff = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
+  }, "a", false), /*#__PURE__*/_jsxDEV("line", {
+    x1: "1",
+    y1: "1",
+    x2: "23",
+    y2: "23"
+  }, "b", false)]
+}, void 0, false);
+const Stars = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: /*#__PURE__*/_jsxDEV("path", {
+    d: "M12 2 9 9H2l5.5 4L5 20l7-4 7 4-2.5-7L22 9h-7z"
+  }, void 0, false)
+}, void 0, false);
+const News = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"
+  }, "a", false), /*#__PURE__*/_jsxDEV("path", {
+    d: "M18 14h-8M15 18h-5M10 6h8v4h-8z"
+  }, "b", false)]
+}, void 0, false);
+const Wlt = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"
+  }, "a", false), /*#__PURE__*/_jsxDEV("path", {
+    d: "M16 12h5v4h-5a2 2 0 0 1 0-4z"
+  }, "b", false)]
+}, void 0, false);
+const Str = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: /*#__PURE__*/_jsxDEV("polygon", {
+    points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+  }, void 0, false)
+}, void 0, false);
+const TrUp = ({
+  s = 16,
+  cl = ""
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  cl: cl,
+  ch: [/*#__PURE__*/_jsxDEV("polyline", {
+    points: "23 6 13.5 15.5 8.5 10.5 1 18"
+  }, "a", false), /*#__PURE__*/_jsxDEV("polyline", {
+    points: "17 6 23 6 23 12"
+  }, "b", false)]
+}, void 0, false);
+const TrDn = ({
+  s = 16,
+  cl = ""
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  cl: cl,
+  ch: [/*#__PURE__*/_jsxDEV("polyline", {
+    points: "23 18 13.5 8.5 8.5 13.5 1 6"
+  }, "a", false), /*#__PURE__*/_jsxDEV("polyline", {
+    points: "17 18 23 18 23 12"
+  }, "b", false)]
+}, void 0, false);
+const Bell = ({
+  s = 16
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
+  }, "a", false), /*#__PURE__*/_jsxDEV("path", {
+    d: "M13.73 21a2 2 0 0 1-3.46 0"
+  }, "b", false)]
+}, void 0, false);
+const Grip = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [5, 12, 19].flatMap(y => [9, 15].map(x => /*#__PURE__*/_jsxDEV("circle", {
+    cx: x,
+    cy: y,
+    r: "1.2",
+    fill: "currentColor",
+    stroke: "none"
+  }, x + "," + y, false)))
+}, void 0, false);
+const Grid = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [[3, 3], [14, 3], [14, 14], [3, 14]].map(([x, y]) => /*#__PURE__*/_jsxDEV("rect", {
+    x: x,
+    y: y,
+    width: "7",
+    height: "7"
+  }, x, false))
+}, void 0, false);
+const Chk = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: /*#__PURE__*/_jsxDEV("polyline", {
+    points: "20 6 9 17 4 12"
+  }, void 0, false)
+}, void 0, false);
+const Out = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("path", {
+    d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+  }, "a", false), /*#__PURE__*/_jsxDEV("polyline", {
+    points: "16 17 21 12 16 7"
+  }, "b", false), /*#__PURE__*/_jsxDEV("line", {
+    x1: "21",
+    y1: "12",
+    x2: "9",
+    y2: "12"
+  }, "c", false)]
+}, void 0, false);
+const ArrU = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("line", {
+    x1: "7",
+    y1: "17",
+    x2: "17",
+    y2: "7"
+  }, "a", false), /*#__PURE__*/_jsxDEV("polyline", {
+    points: "7 7 17 7 17 17"
+  }, "b", false)]
+}, void 0, false);
+const ArrD = ({
+  s = 14
+}) => /*#__PURE__*/_jsxDEV(I, {
+  s: s,
+  ch: [/*#__PURE__*/_jsxDEV("line", {
+    x1: "7",
+    y1: "7",
+    x2: "17",
+    y2: "17"
+  }, "a", false), /*#__PURE__*/_jsxDEV("polyline", {
+    points: "17 7 17 17 7 17"
+  }, "b", false)]
+}, void 0, false);
+
+/* ---- Einfache Sparkline ohne externe Bibliothek ---- */
+function Spark({
+  data
+}) {
+  const mx = Math.max(...data),
+    mn = Math.min(...data),
+    w = 120,
+    h = 50,
+    r = mx - mn || 1;
+  const pts = data.map((v, i) => `${i / (data.length - 1) * w},${h - (v - mn) / r * h}`).join(" ");
+  const area = `M${pts.split(" ").map((p, i) => i === 0 ? `${p}` : p).join(" L")} L${w},${h} L0,${h} Z`;
+  return /*#__PURE__*/_jsxDEV("svg", {
+    viewBox: `0 0 ${w} ${h}`,
+    style: {
+      width: "100%",
+      height: "100%",
+      overflow: "visible"
+    },
+    children: [/*#__PURE__*/_jsxDEV("defs", {
+      children: /*#__PURE__*/_jsxDEV("linearGradient", {
+        id: "sg",
+        x1: "0",
+        y1: "0",
+        x2: "0",
+        y2: "1",
+        children: [/*#__PURE__*/_jsxDEV("stop", {
+          offset: "0%",
+          stopColor: "#5FAE7C",
+          stopOpacity: ".45"
+        }, void 0, false), /*#__PURE__*/_jsxDEV("stop", {
+          offset: "100%",
+          stopColor: "#5FAE7C",
+          stopOpacity: "0"
+        }, void 0, false)]
+      }, void 0, true)
+    }, void 0, false), /*#__PURE__*/_jsxDEV("path", {
+      d: area,
+      fill: "url(#sg)"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("polyline", {
+      points: pts,
+      fill: "none",
+      stroke: "#5FAE7C",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round"
+    }, void 0, false)]
+  }, void 0, true);
+}
+
+/* ---- Hilfs-UI ---- */
+function Change({
+  v,
+  sm
+}) {
+  const pos = v >= 0;
+  return /*#__PURE__*/_jsxDEV("span", {
+    className: `ch ${pos ? "pos" : "neg"}`,
+    children: [pos ? /*#__PURE__*/_jsxDEV(ArrU, {
+      s: sm ? 12 : 14
+    }, void 0, false) : /*#__PURE__*/_jsxDEV(ArrD, {
+      s: sm ? 12 : 14
+    }, void 0, false), Math.abs(v).toFixed(1), "%"]
+  }, void 0, true);
+}
+function WH({
+  icon,
+  title,
+  sub
+}) {
+  return /*#__PURE__*/_jsxDEV("div", {
+    className: "wh",
+    children: [/*#__PURE__*/_jsxDEV("div", {
+      className: "wi",
+      children: icon
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      children: [/*#__PURE__*/_jsxDEV("div", {
+        className: "wt",
+        children: title
+      }, void 0, false), sub && /*#__PURE__*/_jsxDEV("div", {
+        className: "ws",
+        children: sub
+      }, void 0, false)]
+    }, void 0, true)]
+  }, void 0, true);
+}
+
+/* ---- Widget-Inhalte ---- */
+const W = {
+  ai: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(Stars, {
+        s: 16
+      }, void 0, false),
+      title: "KI-Recherche",
+      sub: "Mögliche Chancen heute"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "ail",
+      children: AI_PICKS.map(p => /*#__PURE__*/_jsxDEV("div", {
+        className: "aip",
+        children: [/*#__PURE__*/_jsxDEV("div", {
+          className: "apt",
+          children: [/*#__PURE__*/_jsxDEV("span", {
+            className: "tp",
+            children: p.t
+          }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+            className: "cn",
+            children: [p.c, "% Konfidenz"]
+          }, void 0, true)]
+        }, void 0, true), /*#__PURE__*/_jsxDEV("p", {
+          className: "an",
+          children: p.n
+        }, void 0, false)]
+      }, p.t, true))
+    }, void 0, false), /*#__PURE__*/_jsxDEV("p", {
+      className: "wf",
+      children: "Stand: 30.06.2026 – kein Live-Feed, keine Anlageempfehlung."
+    }, void 0, false)]
+  }, void 0, true),
+  news: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(News, {
+        s: 16
+      }, void 0, false),
+      title: "Nachrichten",
+      sub: "Sortiert nach Relevanz"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "nl",
+      children: NEWS.map((n, i) => /*#__PURE__*/_jsxDEV("div", {
+        className: "nr",
+        children: [/*#__PURE__*/_jsxDEV("span", {
+          className: `dt dt-${n.s}`
+        }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+          className: "tp sm",
+          children: n.t
+        }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+          className: "nx",
+          children: n.x
+        }, void 0, false)]
+      }, i, true))
+    }, void 0, false)]
+  }, void 0, true),
+  pf: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(Wlt, {
+        s: 16
+      }, void 0, false),
+      title: "Portfolio",
+      sub: "Gesamtwert"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "pfr",
+      children: [/*#__PURE__*/_jsxDEV("div", {
+        children: [/*#__PURE__*/_jsxDEV("div", {
+          className: "pfv",
+          children: "48.230,90 €"
+        }, void 0, false), /*#__PURE__*/_jsxDEV(Change, {
+          v: 2.4
+        }, void 0, false)]
+      }, void 0, true), /*#__PURE__*/_jsxDEV("div", {
+        className: "spk",
+        children: /*#__PURE__*/_jsxDEV(Spark, {
+          data: SPARK
+        }, void 0, false)
+      }, void 0, false)]
+    }, void 0, true)]
+  }, void 0, true),
+  wl: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(Str, {
+        s: 16
+      }, void 0, false),
+      title: "Watchlist"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "wll",
+      children: WATCH.slice(0, 3).map(w => /*#__PURE__*/_jsxDEV("div", {
+        className: "wr",
+        children: [/*#__PURE__*/_jsxDEV("span", {
+          className: "tp sm",
+          children: w.t
+        }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+          className: "wp",
+          children: w.p
+        }, void 0, false), /*#__PURE__*/_jsxDEV(Change, {
+          v: w.ch,
+          sm: true
+        }, void 0, false)]
+      }, w.t, true))
+    }, void 0, false)]
+  }, void 0, true),
+  mv: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(TrUp, {
+        s: 16
+      }, void 0, false),
+      title: "Tagesbewegung"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "mr",
+      children: [/*#__PURE__*/_jsxDEV(TrUp, {
+        s: 14,
+        cl: "ip"
+      }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+        className: "tp sm",
+        children: MOVERS.g.t
+      }, void 0, false), /*#__PURE__*/_jsxDEV(Change, {
+        v: MOVERS.g.ch,
+        sm: true
+      }, void 0, false)]
+    }, void 0, true), /*#__PURE__*/_jsxDEV("div", {
+      className: "mr",
+      children: [/*#__PURE__*/_jsxDEV(TrDn, {
+        s: 14,
+        cl: "in"
+      }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+        className: "tp sm",
+        children: MOVERS.l.t
+      }, void 0, false), /*#__PURE__*/_jsxDEV(Change, {
+        v: MOVERS.l.ch,
+        sm: true
+      }, void 0, false)]
+    }, void 0, true)]
+  }, void 0, true),
+  al: () => /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV(WH, {
+      icon: /*#__PURE__*/_jsxDEV(Bell, {
+        s: 16
+      }, void 0, false),
+      title: "Preisalarm"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("p", {
+      className: "at",
+      children: "AAPL nähert sich deiner Marke von 290 $."
+    }, void 0, false)]
+  }, void 0, true)
+};
+
+/* ---- Ticker-Band ---- */
+function Ticker() {
+  const items = [...TAPE, ...TAPE];
+  return /*#__PURE__*/_jsxDEV("div", {
+    className: "tkr",
+    children: /*#__PURE__*/_jsxDEV("div", {
+      className: "ttr",
+      children: items.map((t, i) => /*#__PURE__*/_jsxDEV("span", {
+        className: "ti",
+        children: [/*#__PURE__*/_jsxDEV("span", {
+          className: "ts",
+          children: t.t
+        }, void 0, false), /*#__PURE__*/_jsxDEV(Change, {
+          v: t.ch,
+          sm: true
+        }, void 0, false)]
+      }, i, true))
+    }, void 0, false)
+  }, void 0, false);
+}
+
+/* ---- Auth-Wrapper ---- */
+function Shell({
+  ch
+}) {
+  return /*#__PURE__*/_jsxDEV("div", {
+    className: "sh",
+    children: [/*#__PURE__*/_jsxDEV(Ticker, {}, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "sc",
+      children: /*#__PURE__*/_jsxDEV("div", {
+        className: "cd",
+        children: [/*#__PURE__*/_jsxDEV("div", {
+          className: "wm",
+          children: [/*#__PURE__*/_jsxDEV(Lock, {
+            s: 18
+          }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+            children: "TRADE SNIFFER"
+          }, void 0, false)]
+        }, void 0, true), ch]
+      }, void 0, true)
+    }, void 0, false)]
+  }, void 0, true);
+}
+function Setup({
+  onDone
+}) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function go(e) {
+    e.preventDefault();
+    if (pw.length < 4) {
+      setErr("Mindestens 4 Zeichen.");
+      return;
+    }
+    if (pw !== pw2) {
+      setErr("Passwörter stimmen nicht überein.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onDone(pw);
+    } catch (ex) {
+      setErr("Speichern fehlgeschlagen: " + ex.message);
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/_jsxDEV("form", {
+    onSubmit: go,
+    className: "af",
+    children: [/*#__PURE__*/_jsxDEV("p", {
+      className: "al",
+      children: "Lege dein Passwort fest."
+    }, void 0, false), /*#__PURE__*/_jsxDEV("label", {
+      className: "lb",
+      children: "Passwort wählen"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "iw",
+      children: [/*#__PURE__*/_jsxDEV("input", {
+        type: show ? "text" : "password",
+        value: pw,
+        onChange: e => {
+          setPw(e.target.value);
+          setErr("");
+        },
+        className: "ai",
+        autoFocus: true
+      }, void 0, false), /*#__PURE__*/_jsxDEV("button", {
+        type: "button",
+        className: "ie",
+        onClick: () => setShow(s => !s),
+        children: show ? /*#__PURE__*/_jsxDEV(EyeOff, {
+          s: 16
+        }, void 0, false) : /*#__PURE__*/_jsxDEV(Eye, {
+          s: 16
+        }, void 0, false)
+      }, void 0, false)]
+    }, void 0, true), /*#__PURE__*/_jsxDEV("label", {
+      className: "lb",
+      children: "Passwort bestätigen"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("input", {
+      type: show ? "text" : "password",
+      value: pw2,
+      onChange: e => {
+        setPw2(e.target.value);
+        setErr("");
+      },
+      className: "ai"
+    }, void 0, false), err && /*#__PURE__*/_jsxDEV("p", {
+      className: "ae",
+      children: err
+    }, void 0, false), /*#__PURE__*/_jsxDEV("button", {
+      type: "submit",
+      className: "as",
+      disabled: busy,
+      children: busy ? "Wird gespeichert …" : "Passwort festlegen"
+    }, void 0, false)]
+  }, void 0, true);
+}
+function Login({
+  onSubmit,
+  onReset
+}) {
+  const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [conf, setConf] = useState(false);
+  async function go(e) {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await onSubmit(pw);
+    } catch {
+      setErr("Falsches Passwort.");
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/_jsxDEV("form", {
+    onSubmit: go,
+    className: "af",
+    children: [/*#__PURE__*/_jsxDEV("p", {
+      className: "al",
+      children: "Willkommen zurück."
+    }, void 0, false), /*#__PURE__*/_jsxDEV("label", {
+      className: "lb",
+      children: "Passwort"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "iw",
+      children: [/*#__PURE__*/_jsxDEV("input", {
+        type: show ? "text" : "password",
+        value: pw,
+        onChange: e => {
+          setPw(e.target.value);
+          setErr("");
+        },
+        className: "ai",
+        autoFocus: true
+      }, void 0, false), /*#__PURE__*/_jsxDEV("button", {
+        type: "button",
+        className: "ie",
+        onClick: () => setShow(s => !s),
+        children: show ? /*#__PURE__*/_jsxDEV(EyeOff, {
+          s: 16
+        }, void 0, false) : /*#__PURE__*/_jsxDEV(Eye, {
+          s: 16
+        }, void 0, false)
+      }, void 0, false)]
+    }, void 0, true), err && /*#__PURE__*/_jsxDEV("p", {
+      className: "ae",
+      children: err
+    }, void 0, false), /*#__PURE__*/_jsxDEV("button", {
+      type: "submit",
+      className: "as",
+      disabled: busy,
+      children: busy ? "Wird geprüft …" : "Anmelden"
+    }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+      className: "rr",
+      children: !conf ? /*#__PURE__*/_jsxDEV("button", {
+        type: "button",
+        className: "lk",
+        onClick: () => setConf(true),
+        children: "Passwort vergessen?"
+      }, void 0, false) : /*#__PURE__*/_jsxDEV("div", {
+        className: "rc",
+        children: [/*#__PURE__*/_jsxDEV("span", {
+          children: "Sicher? Alle Daten werden gelöscht."
+        }, void 0, false), /*#__PURE__*/_jsxDEV("div", {
+          className: "ra",
+          children: [/*#__PURE__*/_jsxDEV("button", {
+            type: "button",
+            className: "lk",
+            onClick: onReset,
+            children: "Ja"
+          }, void 0, false), /*#__PURE__*/_jsxDEV("button", {
+            type: "button",
+            className: "lk mu",
+            onClick: () => setConf(false),
+            children: "Abbrechen"
+          }, void 0, false)]
+        }, void 0, true)]
+      }, void 0, true)
+    }, void 0, false)]
+  }, void 0, true);
+}
+
+/* ---- Dashboard ---- */
+function Dashboard({
+  onLogout,
+  ok,
+  onFail
+}) {
+  const [widgets, setWidgets] = useState(INIT_W);
+  const [loaded, setLoaded] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [szOpen, setSzOpen] = useState(null);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const v = await dbGet("layout");
+        if (live && v) setWidgets(JSON.parse(v));
+      } catch {} finally {
+        if (live) setLoaded(true);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      try {
+        await dbSet("layout", JSON.stringify(widgets));
+      } catch {
+        onFail();
+      }
+    })();
+  }, [widgets, loaded]);
+  function drop(tid) {
+    if (!drag || drag === tid) {
+      setDrag(null);
+      setHover(null);
+      return;
+    }
+    setWidgets(p => {
+      const a = [...p],
+        fi = a.findIndex(w => w.id === drag),
+        ti = a.findIndex(w => w.id === tid);
+      const [m] = a.splice(fi, 1);
+      a.splice(ti, 0, m);
+      return a;
+    });
+    setDrag(null);
+    setHover(null);
+  }
+  function resize(id, sz) {
+    setWidgets(p => p.map(w => w.id === id ? {
+      ...w,
+      size: sz
+    } : w));
+    setSzOpen(null);
+  }
+  return /*#__PURE__*/_jsxDEV("div", {
+    className: "dsh",
+    children: [/*#__PURE__*/_jsxDEV(Ticker, {}, void 0, false), /*#__PURE__*/_jsxDEV("header", {
+      className: "dh",
+      children: [/*#__PURE__*/_jsxDEV("div", {
+        className: "wm",
+        children: [/*#__PURE__*/_jsxDEV(Lock, {
+          s: 16
+        }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+          children: "TRADE SNIFFER"
+        }, void 0, false)]
+      }, void 0, true), /*#__PURE__*/_jsxDEV("div", {
+        className: "da",
+        children: [/*#__PURE__*/_jsxDEV("button", {
+          className: `pl ${edit ? "ac" : ""}`,
+          onClick: () => {
+            setEdit(e => !e);
+            setSzOpen(null);
+          },
+          children: [edit ? /*#__PURE__*/_jsxDEV(Chk, {
+            s: 14
+          }, void 0, false) : /*#__PURE__*/_jsxDEV(Grid, {
+            s: 14
+          }, void 0, false), edit ? "Fertig" : "Anordnen"]
+        }, void 0, true), /*#__PURE__*/_jsxDEV("button", {
+          className: "pl gh",
+          onClick: onLogout,
+          children: [/*#__PURE__*/_jsxDEV(Out, {
+            s: 14
+          }, void 0, false), "Abmelden"]
+        }, void 0, true)]
+      }, void 0, true)]
+    }, void 0, true), !ok && /*#__PURE__*/_jsxDEV("div", {
+      className: "pb",
+      children: "Datenbankverbindung unterbrochen – Änderungen bleiben nur für diese Sitzung."
+    }, void 0, false), szOpen && /*#__PURE__*/_jsxDEV("div", {
+      className: "bk",
+      onClick: () => setSzOpen(null)
+    }, void 0, false), /*#__PURE__*/_jsxDEV("main", {
+      className: "gr",
+      children: widgets.map((w, i) => {
+        const R = W[w.type];
+        return /*#__PURE__*/_jsxDEV("div", {
+          className: ["kc", `sz-${w.size}`, edit ? "ed" : "", drag === w.id ? "dr" : "", hover === w.id && drag && drag !== w.id ? "hv" : ""].join(" "),
+          style: edit ? {
+            animationDelay: i % 2 === 0 ? "0s" : "0.13s"
+          } : undefined,
+          draggable: edit,
+          onDragStart: () => setDrag(w.id),
+          onDragOver: e => {
+            e.preventDefault();
+            setHover(w.id);
+          },
+          onDragLeave: () => setHover(h => h === w.id ? null : h),
+          onDrop: () => drop(w.id),
+          onDragEnd: () => {
+            setDrag(null);
+            setHover(null);
+          },
+          children: [edit && /*#__PURE__*/_jsxDEV("span", {
+            className: "dp",
+            children: /*#__PURE__*/_jsxDEV(Grip, {
+              s: 14
+            }, void 0, false)
+          }, void 0, false), /*#__PURE__*/_jsxDEV(R, {}, void 0, false), edit && /*#__PURE__*/_jsxDEV("div", {
+            className: "rs",
+            children: [/*#__PURE__*/_jsxDEV("button", {
+              className: "rb",
+              onClick: () => setSzOpen(id => id === w.id ? null : w.id),
+              children: "Größe"
+            }, void 0, false), szOpen === w.id && /*#__PURE__*/_jsxDEV("div", {
+              className: "sm",
+              onClick: e => e.stopPropagation(),
+              children: [["small", "Klein"], ["wide", "Breit"], ["large", "Groß"]].map(([k, l]) => /*#__PURE__*/_jsxDEV("button", {
+                className: `so ${w.size === k ? "sl" : ""}`,
+                onClick: () => resize(w.id, k),
+                children: [/*#__PURE__*/_jsxDEV("div", {
+                  className: "spf",
+                  children: /*#__PURE__*/_jsxDEV("div", {
+                    className: `sps sp-${k}`
+                  }, void 0, false)
+                }, void 0, false), /*#__PURE__*/_jsxDEV("span", {
+                  children: l
+                }, void 0, false)]
+              }, k, true))
+            }, void 0, false)]
+          }, void 0, true)]
+        }, w.id, true);
+      })
+    }, void 0, false), /*#__PURE__*/_jsxDEV("p", {
+      className: "pf",
+      children: "Schnappschuss 30.06.2026 – noch ohne Live-Anbindung."
+    }, void 0, false)]
+  }, void 0, true);
+}
+
+/* ---- App ---- */
+function App() {
+  const [screen, setScreen] = useState("loading");
+  const [hash, setHash] = useState(null);
+  const [ok, setOk] = useState(true);
+  useEffect(() => {
+    if (!db) {
+      setScreen("setup");
+      return;
+    }
+    let live = true;
+    (async () => {
+      try {
+        const h = await dbGet("hash");
+        if (!live) return;
+        if (h) {
+          setHash(h);
+          setScreen("login");
+        } else {
+          setScreen("setup");
+        }
+      } catch (e) {
+        if (live) {
+          setOk(false);
+          setScreen("setup");
+          showError("Datenbank nicht erreichbar: " + e.message);
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  async function setup(pw) {
+    const h = await hashPw(pw);
+    await dbSet("hash", h);
+    setHash(h);
+    document.getElementById("boot").style.display = "none";
+    setScreen("dashboard");
+  }
+  async function login(pw) {
+    const h = await hashPw(pw);
+    if (h !== hash) throw new Error("falsch");
+    document.getElementById("boot").style.display = "none";
+    setScreen("dashboard");
+  }
+  async function reset() {
+    await dbDel("hash");
+    await dbDel("layout");
+    setHash(null);
+    setScreen("setup");
+  }
+
+  // Boot-Screen ausblenden sobald React bereit ist
+  useEffect(() => {
+    if (screen !== "loading") {
+      const b = document.getElementById("boot");
+      if (b && screen === "dashboard") b.style.display = "none";
+    }
+  }, [screen]);
+  const CSS = `
+    *,*::before,*::after{box-sizing:border-box;}
+    .wm{display:flex;align-items:center;gap:8px;font-family:'Fraunces',serif;font-weight:600;letter-spacing:.06em;color:#3FC6C2;font-size:15px;white-space:nowrap;}
+    .tkr{overflow:hidden;border-bottom:1px solid #323436;background:#222426;}
+    .ttr{display:flex;width:max-content;gap:28px;padding:7px 16px;animation:mq 26s linear infinite;}
+    .ti{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C8D90;white-space:nowrap;}
+    .ts{color:#ECEAE5;font-weight:600;}
+    @keyframes mq{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+    .ch{display:inline-flex;align-items:center;gap:2px;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;}
+    .ch.pos{color:#5FAE7C;}.ch.neg{color:#C9695A;}
+    .sh{min-height:100vh;display:flex;flex-direction:column;background:radial-gradient(1200px 600px at 15% -10%,rgba(63,198,194,.08),transparent),repeating-linear-gradient(115deg,rgba(255,255,255,.012) 0px,rgba(255,255,255,.012) 1px,transparent 1px,transparent 7px),#08090A;}
+    .sc{flex:1;display:flex;align-items:center;justify-content:center;padding:32px 20px;}
+    .cd{width:100%;max-width:360px;background:#1A1B1D;border:1px solid #323436;border-radius:16px;padding:32px 28px;display:flex;flex-direction:column;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+    .af{display:flex;flex-direction:column;gap:6px;}
+    .al{color:#8C8D90;font-size:14px;margin:0 0 10px;}
+    .lb{font-size:12px;color:#8C8D90;margin-top:10px;margin-bottom:6px;}
+    .iw{position:relative;display:flex;align-items:center;}
+    .ai{width:100%;background:#222426;border:1px solid #323436;color:#ECEAE5;border-radius:10px;padding:11px 38px 11px 13px;font-size:14px;font-family:'Inter',sans-serif;}
+    .ie{position:absolute;right:8px;background:none;border:none;color:#8C8D90;display:flex;padding:4px;cursor:pointer;}
+    .ae{color:#C9695A;font-size:12px;margin:4px 0 0;}
+    .as{margin-top:18px;background:#3FC6C2;color:#082422;border:none;font-weight:600;font-size:14px;padding:12px;border-radius:10px;cursor:pointer;transition:filter .15s;font-family:'Inter',sans-serif;}
+    .as:hover:not(:disabled){filter:brightness(1.08);}.as:disabled{opacity:.6;cursor:default;}
+    .rr{margin-top:4px;}.lk{background:none;border:none;color:#3FC6C2;font-size:12px;padding:2px 0;cursor:pointer;font-family:'Inter',sans-serif;}
+    .lk.mu{color:#8C8D90;}.rc{display:flex;flex-direction:column;gap:8px;}
+    .rc span{font-size:12px;color:#8C8D90;line-height:1.4;}.ra{display:flex;gap:14px;}
+    .dsh{min-height:100vh;background:radial-gradient(1200px 600px at 15% -10%,rgba(63,198,194,.08),transparent),repeating-linear-gradient(115deg,rgba(255,255,255,.012) 0px,rgba(255,255,255,.012) 1px,transparent 1px,transparent 7px),#08090A;}
+    .dh{display:flex;align-items:center;justify-content:space-between;padding:16px 22px;border-bottom:1px solid #323436;}
+    .da{display:flex;gap:10px;}
+    .pl{display:flex;align-items:center;gap:6px;background:#1A1B1D;border:1px solid #323436;color:#ECEAE5;font-size:13px;padding:8px 14px;border-radius:999px;transition:border-color .15s;font-family:'Inter',sans-serif;cursor:pointer;}
+    .pl:hover{border-color:#3FC6C2;}.pl.ac{background:#3FC6C2;color:#082422;border-color:#3FC6C2;}.pl.gh{color:#8C8D90;}
+    .pb{margin:14px 22px 0;padding:10px 14px;border-radius:10px;background:#222426;border:1px solid #3FC6C2;color:#8C8D90;font-size:12px;line-height:1.4;}
+    .pf{text-align:center;color:#8C8D90;font-size:11px;padding:18px 0 26px;}
+    .gr{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:168px;grid-auto-flow:dense;gap:16px;padding:22px;}
+    .sz-small{grid-column:span 1;grid-row:span 1;}.sz-wide{grid-column:span 2;grid-row:span 1;}.sz-large{grid-column:span 2;grid-row:span 2;}
+    @media(max-width:720px){.gr{grid-template-columns:repeat(2,1fr);}.sz-wide,.sz-large{grid-column:span 2;}}
+    .kc{position:relative;background:#1A1B1D;border:1px solid #323436;border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;overflow:hidden;transition:transform .15s,border-color .15s,box-shadow .15s;}
+    .kc:not(.ed):hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.3);}
+    .kc.ed{animation:jg .32s infinite ease-in-out alternate;cursor:grab;}
+    .kc.dr{opacity:.4;}.kc.hv{border-color:#3FC6C2;box-shadow:0 0 0 1px #3FC6C2 inset;}
+    @keyframes jg{from{transform:rotate(-.5deg)}to{transform:rotate(.5deg)}}
+    .dp{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:50%;background:#3FC6C2;color:#082422;display:flex;align-items:center;justify-content:center;}
+    .wh{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+    .wi{width:28px;height:28px;border-radius:8px;background:#222426;color:#3FC6C2;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+    .wt{font-weight:600;font-size:13.5px;}.ws{font-size:11px;color:#8C8D90;}
+    .wf{margin-top:auto;padding-top:8px;font-size:10px;color:#8C8D90;}
+    .tp{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;background:#222426;border:1px solid #323436;color:#ECEAE5;padding:2px 7px;border-radius:6px;}
+    .tp.sm{font-size:10px;padding:1px 6px;}
+    .ail{display:flex;flex-direction:column;gap:10px;overflow:auto;}
+    .aip{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;}
+    .apt{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+    .cn{font-size:11px;color:#3FC6C2;font-weight:600;}.an{font-size:12px;color:#8C8D90;line-height:1.4;margin:0;}
+    .nl{display:flex;flex-direction:column;gap:9px;overflow:auto;}
+    .nr{display:flex;align-items:center;gap:8px;font-size:12.5px;}
+    .nx{color:#8C8D90;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+    .dt{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    .dt-pos{background:#5FAE7C;}.dt-neg{background:#C9695A;}.dt-neu{background:#8C8D90;}
+    .pfr{display:flex;align-items:center;justify-content:space-between;flex:1;gap:14px;}
+    .pfv{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;margin-bottom:4px;}
+    .spk{width:50%;height:60px;}
+    .wll{display:flex;flex-direction:column;gap:8px;}
+    .wr{display:flex;align-items:center;justify-content:space-between;font-size:12px;}
+    .wp{font-family:'IBM Plex Mono',monospace;color:#8C8D90;}
+    .mr{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;}
+    .ip{color:#5FAE7C;}.in{color:#C9695A;}.at{font-size:12.5px;color:#8C8D90;line-height:1.5;margin:0;}
+    .rs{position:absolute;bottom:8px;right:8px;}
+    .rb{background:#222426;border:1px solid #323436;color:#8C8D90;font-size:10px;padding:4px 9px;border-radius:999px;cursor:pointer;font-family:'Inter',sans-serif;}
+    .rb:hover{border-color:#3FC6C2;color:#ECEAE5;}
+    .sm{position:absolute;bottom:30px;right:0;background:#1A1B1D;border:1px solid #323436;border-radius:12px;padding:10px;display:flex;gap:8px;box-shadow:0 12px 30px rgba(0,0,0,.4);z-index:50;}
+    .so{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:1px solid transparent;border-radius:8px;padding:6px 8px;color:#8C8D90;font-size:10px;cursor:pointer;font-family:'Inter',sans-serif;}
+    .so.sl{border-color:#3FC6C2;color:#ECEAE5;}
+    .spf{width:34px;height:30px;display:flex;align-items:center;justify-content:center;}
+    .sps{background:#3FC6C2;border-radius:3px;}
+    .sp-small{width:14px;height:14px;}.sp-wide{width:26px;height:13px;}.sp-large{width:24px;height:24px;}
+    .bk{position:fixed;inset:0;z-index:40;}
+    *:focus-visible{outline:2px solid #3FC6C2;outline-offset:2px;}
+    @media(prefers-reduced-motion:reduce){.ttr{animation:none;}.kc.ed{animation:none;}}
+  `;
+  return /*#__PURE__*/_jsxDEV(_Fragment, {
+    children: [/*#__PURE__*/_jsxDEV("style", {
+      children: CSS
+    }, void 0, false), screen === "setup" && /*#__PURE__*/_jsxDEV(Shell, {
+      ch: /*#__PURE__*/_jsxDEV(Setup, {
+        onDone: setup
+      }, void 0, false)
+    }, void 0, false), screen === "login" && /*#__PURE__*/_jsxDEV(Shell, {
+      ch: /*#__PURE__*/_jsxDEV(Login, {
+        onSubmit: login,
+        onReset: reset
+      }, void 0, false)
+    }, void 0, false), screen === "loading" && /*#__PURE__*/_jsxDEV(Shell, {
+      ch: /*#__PURE__*/_jsxDEV("p", {
+        style: {
+          color: "#8C8D90",
+          fontSize: 14
+        },
+        children: "Verbindung wird hergestellt …"
+      }, void 0, false)
+    }, void 0, false), screen === "dashboard" && /*#__PURE__*/_jsxDEV(Dashboard, {
+      onLogout: () => setScreen("login"),
+      ok: ok,
+      onFail: () => setOk(false)
+    }, void 0, false)]
+  }, void 0, true);
+}
+ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/_jsxDEV(App, {}, void 0, false));
+</script>
+</body>
+</html>
