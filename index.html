@@ -11,11 +11,10 @@
     #boot{display:flex;align-items:center;justify-content:center;min-height:100vh;}
     #boot-logo{color:#3FC6C2;font-family:'Fraunces',serif;font-size:22px;letter-spacing:.08em;margin-bottom:12px;text-align:center;}
     #boot-msg{color:#8C8D90;font-size:14px;text-align:center;}
-    #err-box{display:none;margin:20px auto;max-width:440px;background:#1A1B1D;border:1px solid #C9695A;border-radius:12px;padding:20px;color:#C9695A;font-size:13px;line-height:1.7;}
   </style>
 </head>
 <body>
-<div id="boot"><div><div id="boot-logo">⬡ TRADE SNIFFER</div><div id="boot-msg">Wird geladen …</div><div id="err-box"></div></div></div>
+<div id="boot"><div><div id="boot-logo">⬡ TRADE SNIFFER</div><div id="boot-msg">Wird geladen …</div></div></div>
 <div id="root"></div>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -272,6 +271,77 @@ Analysiere alles und antworte NUR in diesem JSON-Format (kein Text davor oder da
 }
 
 /* ---- React ---- */
+/* ---- Error Boundary – zeigt Fehler sichtbar statt schwarzem Bildschirm ---- */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      error: null
+    };
+  }
+  static getDerivedStateFromError(e) {
+    return {
+      error: e
+    };
+  }
+  render() {
+    if (this.state.error) return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#08090A",
+        padding: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxWidth: 480,
+        background: "#1A1B1D",
+        border: "1px solid #C9695A",
+        borderRadius: 14,
+        padding: 28
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#3FC6C2",
+        fontFamily: "Fraunces,serif",
+        fontSize: 16,
+        marginBottom: 14
+      }
+    }, "⬡ TRADE SNIFFER"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#C9695A",
+        fontWeight: 600,
+        marginBottom: 10
+      }
+    }, "⚠ Fehler beim Laden"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#8C8D90",
+        fontSize: 13,
+        fontFamily: "monospace",
+        lineHeight: 1.6,
+        wordBreak: "break-all"
+      }
+    }, this.state.error.message), /*#__PURE__*/React.createElement("button", {
+      onClick: () => this.setState({
+        error: null
+      }),
+      style: {
+        marginTop: 18,
+        padding: "10px 20px",
+        background: "#3FC6C2",
+        color: "#082422",
+        border: "none",
+        borderRadius: 8,
+        cursor: "pointer",
+        fontFamily: "Inter,sans-serif",
+        fontWeight: 600
+      }
+    }, "Nochmal versuchen")));
+    return this.props.children;
+  }
+}
 const {
   useState,
   useEffect
@@ -1402,7 +1472,7 @@ function App() {
     onFail: () => setOk(false)
   }));
 }
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App, null));</script>
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));</script>
 <script>
 (function(){
   var root=document.getElementById("root");
@@ -1413,8 +1483,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(
   obs.observe(root,{childList:true,subtree:true});
   setTimeout(function(){
     if(root.children.length===0){
-      var err=document.getElementById("err-box");
-      if(err){err.style.display="block";err.innerHTML="⚠ Laden fehlgeschlagen.<br>Öffne die Browser-Konsole (F12) für Details.";}
+      if(boot){boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – bitte Seite neu laden (Strg+Shift+R)';}
     }
   },10000);
 })();
