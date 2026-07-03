@@ -1146,8 +1146,23 @@ function Dashboard({
     (async () => {
       try {
         const v = await dbGet("layout");
-        if (live && v) setWidgets(JSON.parse(v));
-      } catch {} finally {
+        if (live && v) {
+          // Alte Typ-Namen auf neue mappen (Backward Compatibility)
+          const COMPAT = {
+            pf: "portfolio",
+            wl: "watchlist",
+            mv: "movers",
+            al: "alerts"
+          };
+          const parsed = JSON.parse(v).map(w => ({
+            ...w,
+            type: COMPAT[w.type] || w.type
+          }));
+          setWidgets(parsed);
+        }
+      } catch (e) {
+        console.warn("Layout laden fehlgeschlagen:", e);
+      } finally {
         if (live) setLoaded(true);
       }
     })();
@@ -1269,6 +1284,7 @@ function Dashboard({
     className: "gr"
   }, widgets.map((w, i) => {
     const R = WIDGET_MAP[w.type];
+    if (!R) return null; // Unbekannter Widget-Typ – überspringen
     return /*#__PURE__*/React.createElement("div", {
       key: w.id,
       className: ["kc", `sz-${w.size}`, edit ? "ed" : "", drag === w.id ? "dr" : "", hover === w.id && drag && drag !== w.id ? "hv" : ""].join(" "),
@@ -1483,7 +1499,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(
   obs.observe(root,{childList:true,subtree:true});
   setTimeout(function(){
     if(root.children.length===0){
-      if(boot){boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – bitte Seite neu laden (Strg+Shift+R)';}
+      boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – Strg+Shift+R versuchen';
     }
   },10000);
 })();
