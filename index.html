@@ -228,10 +228,14 @@ async function fetchAllNews() {
 /* ---- Anthropic: KI-Analyse ---- */
 async function analyzeWithClaude(news, quotes) {
   const newsText = news.slice(0, 12).map(n => `[${n.ticker || "Markt"}] ${n.headline}`).join("\n");
+  const positionsText = myPositions?.length > 0 ? "\nMeine echten Positionen:\n" + myPositions.map(p => {
+    const pl = calcPL(p, quotes);
+    return `${p.ticker}: ${p.shares} Anteile, Kaufpreis ~$${p.avgPrice}${pl ? ", aktuell $" + pl.price?.toFixed(2) + " (" + (pl.plPct >= 0 ? "+" : "") + pl.plPct?.toFixed(1) + "% P&L)" : ""}`;
+  }).join("\n") : "";
   const quoteText = Object.entries(quotes).map(([t, q]) => `${t}: $${q.price?.toFixed(2)} (${q.change?.toFixed(2)}%)`).join(", ");
   const prompt = `Du bist mein persönlicher KI-Trading-Assistent. Ich bin Deutscher und handle US-Aktien.
 
-Mein Portfolio: ${ALL_NAMES}
+Mein Portfolio: ${ALL_NAMES}${positionsText}
 Trading-Stil: Mix aus langfristigen Positionen und kurzfristigen Momentum-Trades. 
 Schwerpunkt Quantencomputing (IONQ, QBTS, INFLQ) und Verteidigung (AVAV, RHM.DE).
 Habe bei Everspin (MRAM) mein Geld mit Swing-Trade verdoppelt – suche ähnliche Chancen.
@@ -610,6 +614,208 @@ const Ref = ({
 });
 
 /* ---- Hilfskomponenten ---- */
+
+/* ---- TradingView Symbol-Mapping ---- */
+const TV_SYMBOLS = {
+  NVDA: "NASDAQ:NVDA",
+  AAPL: "NASDAQ:AAPL",
+  QBTS: "NYSE:QBTS",
+  MRAM: "NASDAQ:MRAM",
+  DOUG: "NYSE:DOUG",
+  IONQ: "NYSE:IONQ",
+  AVAV: "NASDAQ:AVAV",
+  "RHM.DE": "XETR:RHM",
+  HTRO: "OMX:HTRO"
+};
+function TVChart({
+  ticker
+}) {
+  const sym = TV_SYMBOLS[ticker] || "NASDAQ:" + ticker;
+  const url = "https://s.tradingview.com/widgetembed/?symbol=" + encodeURIComponent(sym) + "&interval=D&hidesidetoolbar=0&symboledit=1&theme=dark&style=1&locale=de&toolbarbg=131313&withdateranges=1";
+  return /*#__PURE__*/React.createElement("iframe", {
+    src: url,
+    style: {
+      width: "100%",
+      height: "420px",
+      border: "none",
+      borderRadius: 10
+    },
+    allowFullScreen: true,
+    title: "Chart " + ticker
+  });
+}
+function WidgetModal({
+  widgetType,
+  onClose,
+  analysis,
+  rawNews,
+  quotes,
+  aiLoading
+}) {
+  const [chartTicker, setChartTicker] = useState("NVDA");
+  const isChart = ["watchlist", "portfolio", "movers", "daytrading", "alerts"].includes(widgetType);
+  const titles = {
+    ai: "KI-Analyse",
+    news: "Nachrichten",
+    portfolio: "Portfolio",
+    watchlist: "Watchlist – Charts",
+    movers: "Tagesbewegung",
+    buyrecs: "Kaufempfehlungen",
+    daytrading: "Day Trading",
+    alerts: "Preisalarme"
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-bg",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-box",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-header"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "modal-title"
+  }, titles[widgetType] || widgetType), /*#__PURE__*/React.createElement("button", {
+    className: "modal-close",
+    onClick: onClose
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "modal-body"
+  }, isChart && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-ticker-row"
+  }, QUOTE_TICKERS.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.ticker,
+    className: "ticker-btn " + (chartTicker === p.ticker ? "sel" : ""),
+    onClick: () => setChartTicker(p.ticker)
+  }, p.ticker, quotes[p.ticker] && /*#__PURE__*/React.createElement("span", {
+    className: quotes[p.ticker].change >= 0 ? " tp" : " tn"
+  }, " ", quotes[p.ticker].change >= 0 ? "↑" : "↓", Math.abs(quotes[p.ticker].change).toFixed(1), "%")))), /*#__PURE__*/React.createElement(TVChart, {
+    ticker: chartTicker
+  }), quotes[chartTicker] && /*#__PURE__*/React.createElement("div", {
+    className: "modal-quote-bar"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mqb-price"
+  }, "$", quotes[chartTicker].price?.toFixed(2)), /*#__PURE__*/React.createElement("span", {
+    className: "mqb-change " + (quotes[chartTicker].change >= 0 ? "pos" : "neg")
+  }, quotes[chartTicker].change >= 0 ? "▲" : "▼", " ", Math.abs(quotes[chartTicker].change).toFixed(2), "%"), /*#__PURE__*/React.createElement("span", {
+    className: "mqb-prev"
+  }, "Vortag $", quotes[chartTicker].prev?.toFixed(2)))), (widgetType === "ai" || widgetType === "buyrecs") && /*#__PURE__*/React.createElement(React.Fragment, null, aiLoading && /*#__PURE__*/React.createElement("div", {
+    className: "modal-loading"
+  }, "KI analysiert…"), !aiLoading && analysis && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-briefing"
+  }, analysis.briefing), analysis.watchOut && /*#__PURE__*/React.createElement("div", {
+    className: "watchout",
+    style: {
+      margin: "12px 0"
+    }
+  }, "⚠ ", analysis.watchOut), analysis.buyRecommendations?.map((r, i) => /*#__PURE__*/React.createElement("div", {
+    className: "rec-card",
+    key: i,
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: r.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "rec-action"
+  }, r.action), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, r.confidence, "%"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-risk risk-" + r.risk
+  }, r.risk)), /*#__PURE__*/React.createElement("div", {
+    className: "rec-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rec-entry"
+  }, "Einstieg ", r.entryZone), /*#__PURE__*/React.createElement("span", {
+    className: "rec-sep"
+  }, "→"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-target"
+  }, "Ziel ", r.target), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#8C8D90",
+      fontSize: 11
+    }
+  }, r.timeframe)), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 6
+    }
+  }, r.reason))), analysis.opportunities?.map((o, i) => /*#__PURE__*/React.createElement("div", {
+    className: "opp",
+    key: i,
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "opp-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: o.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, o.confidence, "%")), /*#__PURE__*/React.createElement("p", {
+    className: "opp-reason"
+  }, o.reason)))), !aiLoading && !analysis && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine KI-Analyse – Aktualisieren zum Starten.")), widgetType === "daytrading" && analysis?.dayTrading?.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    className: "dt-card",
+    key: i,
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: s.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dt-setup"
+  }, s.setup), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, s.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "dt-levels"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Entry"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val"
+  }, s.entry)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Ziel"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val pos"
+  }, s.target)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Stop"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val neg"
+  }, s.stopLoss))), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 8
+    }
+  }, s.reason))), widgetType === "news" && /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-section"
+  }, (analysis?.topNews?.length ? analysis.topNews : rawNews.slice(0, 20)).map((n, i) => /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-row",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt dt-" + (n.sentiment || "neu"),
+    style: {
+      marginTop: 4
+    }
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-headline"
+  }, n.headline), n.reason && /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-reason"
+  }, n.reason), n.url && /*#__PURE__*/React.createElement("a", {
+    href: n.url,
+    target: "_blank",
+    rel: "noreferrer",
+    className: "modal-news-link"
+  }, "Artikel lesen →"))))))));
+}
 function Change({
   v,
   sm
@@ -819,8 +1025,14 @@ function WNews({
 /* ---- Widget: Portfolio ---- */
 function WPortfolio({
   quotes,
-  loading
+  loading,
+  myPositions
 }) {
+  const hasPositions = myPositions?.length > 0;
+  const plData = hasPositions ? myPositions.map(p => calcPL(p, quotes)).filter(Boolean) : [];
+  const totalCurrent = plData.reduce((s, p) => s + p.current, 0);
+  const totalCost = plData.reduce((s, p) => s + p.cost, 0);
+  const totalPLPct = totalCost > 0 ? (totalCurrent - totalCost) / totalCost * 100 : null;
   const stocks = QUOTE_TICKERS.filter(p => quotes[p.ticker]);
   const avgChange = stocks.length ? stocks.reduce((s, p) => s + (quotes[p.ticker]?.change || 0), 0) / stocks.length : null;
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
@@ -828,17 +1040,24 @@ function WPortfolio({
       s: 16
     }),
     title: "Portfolio",
-    sub: "Deine Positionen",
+    sub: hasPositions ? totalCurrent > 0 ? "Gesamtwert" : "Positionen" : "Deine Positionen",
     loading: loading && !stocks.length
   }), /*#__PURE__*/React.createElement("div", {
     className: "pfr"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, hasPositions && totalCurrent > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     className: "pfv"
-  }, PORTFOLIO.length, " Positionen"), avgChange !== null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+  }, totalCurrent.toLocaleString("de-DE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }), " $"), totalPLPct !== null && /*#__PURE__*/React.createElement(Change, {
+    v: totalPLPct
+  })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "pfv"
+  }, myPositions?.length || PORTFOLIO.length, " Positionen"), avgChange !== null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
     className: "pflab"
-  }, "Ø Heute"), " ", /*#__PURE__*/React.createElement(Change, {
+  }, "Ø "), /*#__PURE__*/React.createElement(Change, {
     v: avgChange
-  }))), /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", {
     className: "spk"
   }, /*#__PURE__*/React.createElement(Sparkline, {
     data: [100, 102, 98, 105, 103, 108, 112, 109, 115, 118]
@@ -1125,6 +1344,373 @@ const INIT_WIDGETS = [{
   size: "small"
 }];
 
+/* ================================================================
+   PORTFOLIO MANAGER
+   ================================================================ */
+
+async function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = () => rej(new Error("Datei konnte nicht gelesen werden"));
+    r.readAsDataURL(file);
+  });
+}
+function calcPL(pos, quotes) {
+  const q = quotes[pos.ticker];
+  if (!q || !pos.shares || !pos.avgPrice) return null;
+  const current = q.price * pos.shares;
+  const cost = pos.avgPrice * pos.shares;
+  const plAbs = current - cost;
+  const plPct = (current - cost) / cost * 100;
+  return {
+    current,
+    cost,
+    plAbs,
+    plPct,
+    price: q.price
+  };
+}
+function PortfolioManager({
+  positions,
+  quotes,
+  onSave,
+  onClose
+}) {
+  const [mode, setMode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState(null); // index
+  const [editForm, setEditForm] = useState({
+    ticker: "",
+    name: "",
+    shares: "",
+    avgPrice: "",
+    currency: "USD"
+  });
+  const CSV_TEMPLATE = "data:text/csv;charset=utf-8,Ticker,Name,Anteile,Kaufpreis_EUR,W%C3%A4hrung%0ANVDA,NVIDIA,10,150.00,USD%0AAAPL,Apple,5,180.00,USD";
+  async function handleScreenshot(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setBusy(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const resp = await fetch(PROXY_URL + "/claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 2000,
+          system: "Du extrahierst Portfolio-Daten aus Screenshots. Antworte NUR mit validem JSON ohne Markdown.",
+          messages: [{
+            role: "user",
+            content: [{
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: file.type || "image/jpeg",
+                data: b64
+              }
+            }, {
+              type: "text",
+              text: `Extrahiere alle Aktienpositionen aus diesem Portfolio-Screenshot.
+Antworte NUR mit diesem JSON (kein Text davor/danach):
+{"positions":[{"ticker":"NVDA","name":"NVIDIA","shares":10.5,"avgPrice":150.00,"currency":"USD"}],"broker":"Trade Republic"}
+Wenn kein Kaufpreis sichtbar ist, setze avgPrice auf 0. Ticker immer in Großbuchstaben.`
+            }]
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.[0]?.text?.replace(/\`\`\`json|\`\`\`/g, "").trim();
+      const parsed = JSON.parse(text);
+      setPreview(parsed.positions || []);
+    } catch (e) {
+      setError("Fehler beim Lesen: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function handleCSV(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const lines = ev.target.result.split("\n").filter(l => l.trim());
+        const header = lines[0].toLowerCase();
+        const positions = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(",").map(c => c.trim().replace(/"/g, ""));
+          if (cols.length < 2) continue;
+          // Flexibles Parsen: versuche verschiedene Spaltenreihenfolgen
+          let ticker = "",
+            name = "",
+            shares = 0,
+            avgPrice = 0,
+            currency = "USD";
+          if (header.includes("ticker")) {
+            const hi = h => header.split(",").findIndex(x => x.includes(h));
+            ticker = cols[hi("ticker")]?.toUpperCase() || "";
+            name = cols[hi("name")] || "";
+            shares = parseFloat(cols[hi("anteil") || hi("shares") || hi("qty") || hi("menge")] || 0);
+            avgPrice = parseFloat(cols[hi("kauf") || hi("avg") || hi("preis") || hi("price")] || 0);
+            currency = cols[hi("währ") || hi("curr")] || "USD";
+          } else {
+            // Fallback: erste 5 Spalten als Ticker,Name,Shares,AvgPrice,Currency
+            [ticker, name, shares, avgPrice, currency] = [cols[0]?.toUpperCase(), cols[1], parseFloat(cols[2] || 0), parseFloat(cols[3] || 0), cols[4] || "USD"];
+          }
+          if (ticker && shares > 0) positions.push({
+            ticker,
+            name,
+            shares,
+            avgPrice,
+            currency
+          });
+        }
+        if (positions.length === 0) throw new Error("Keine Positionen gefunden – prüfe das Format");
+        setPreview(positions);
+      } catch (e) {
+        setError(e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+  function startEdit(i) {
+    setEditing(i);
+    setEditForm(i === -1 ? {
+      ticker: "",
+      name: "",
+      shares: "",
+      avgPrice: "",
+      currency: "USD"
+    } : {
+      ...positions[i],
+      shares: String(positions[i].shares),
+      avgPrice: String(positions[i].avgPrice)
+    });
+  }
+  function saveEdit() {
+    const pos = {
+      ...editForm,
+      shares: parseFloat(editForm.shares) || 0,
+      avgPrice: parseFloat(editForm.avgPrice) || 0,
+      ticker: editForm.ticker.toUpperCase()
+    };
+    if (!pos.ticker || !pos.shares) {
+      setError("Ticker und Anteile sind Pflichtfelder");
+      return;
+    }
+    let updated = [...positions];
+    if (editing === -1) updated.push(pos);else updated[editing] = pos;
+    onSave(updated);
+    setEditing(null);
+    setError("");
+  }
+  function deletePos(i) {
+    onSave(positions.filter((_, j) => j !== i));
+  }
+  const totalPL = positions.reduce((sum, p) => {
+    const pl = calcPL(p, quotes);
+    return pl ? {
+      abs: sum.abs + pl.plAbs,
+      cost: sum.cost + pl.cost
+    } : sum;
+  }, {
+    abs: 0,
+    cost: 0
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-bg",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-box",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxHeight: "92vh"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-header"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "modal-title"
+  }, "Portfolio Manager"), /*#__PURE__*/React.createElement("button", {
+    className: "modal-close",
+    onClick: onClose
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "modal-body"
+  }, editing === null && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-import-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn",
+    onClick: () => setMode("screenshot")
+  }, "📷 Screenshot"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn",
+    onClick: () => setMode("csv")
+  }, "📄 CSV Import"), /*#__PURE__*/React.createElement("a", {
+    className: "pm-btn",
+    href: CSV_TEMPLATE,
+    download: "portfolio_vorlage.csv"
+  }, "⬇ Vorlage"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn accent",
+    onClick: () => startEdit(-1)
+  }, "+ Manuell")), mode === "screenshot" && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-upload-area"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, "Mache einen Screenshot deines Revolut- oder Trade Republic-Portfolios (komplette Übersicht) und lade ihn hier hoch."), busy ? /*#__PURE__*/React.createElement("div", {
+    className: "modal-loading"
+  }, "Claude liest dein Portfolio… ⏳") : /*#__PURE__*/React.createElement("label", {
+    className: "pm-file-label"
+  }, "📷 Screenshot auswählen", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    onChange: handleScreenshot,
+    style: {
+      display: "none"
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setMode(null)
+  }, "← Zurück")), mode === "csv" && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-upload-area"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, "Lade eine CSV-Datei hoch. Spalten: Ticker, Name, Anteile, Kaufpreis, Währung. Oder nutze die Vorlage oben."), /*#__PURE__*/React.createElement("label", {
+    className: "pm-file-label"
+  }, "📄 CSV auswählen", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv,text/csv",
+    onChange: handleCSV,
+    style: {
+      display: "none"
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setMode(null)
+  }, "← Zurück")), preview && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint",
+    style: {
+      color: "#5FAE7C"
+    }
+  }, "✓ ", preview.length, " Positionen erkannt – prüfe und bestätige:"), /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-list"
+  }, preview.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-row",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "tpill sm"
+  }, p.ticker), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pname"
+  }, p.name || "–"), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pshares"
+  }, p.shares, " Stk."), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pavg"
+  }, p.avgPrice > 0 ? "$" + p.avgPrice : "–")))), /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "as",
+    style: {
+      flex: 1
+    },
+    onClick: () => {
+      onSave(preview);
+      setPreview(null);
+      setMode(null);
+    }
+  }, "✓ Speichern"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setPreview(null)
+  }, "✕ Verwerfen"))), editing !== null && /*#__PURE__*/React.createElement("div", {
+    className: "pm-edit-form"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, editing === -1 ? "Neue Position hinzufügen" : "Position bearbeiten"), ["ticker", "name", "shares", "avgPrice"].map(f => /*#__PURE__*/React.createElement("div", {
+    key: f,
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "lb"
+  }, f === "ticker" ? "Ticker (z.B. NVDA)" : f === "name" ? "Name" : f === "shares" ? "Anzahl Anteile" : "Durchschn. Kaufpreis ($)"), /*#__PURE__*/React.createElement("input", {
+    className: "ai",
+    value: editForm[f],
+    onChange: e => setEditForm(x => ({
+      ...x,
+      [f]: e.target.value
+    })),
+    placeholder: f === "ticker" ? "NVDA" : f === "name" ? "NVIDIA Corporation" : f === "shares" ? "10" : "150.00"
+  }))), error && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, error), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "as",
+    style: {
+      flex: 1
+    },
+    onClick: saveEdit
+  }, "Speichern"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => {
+      setEditing(null);
+      setError("");
+    }
+  }, "Abbrechen"))), error && !editing && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, error), editing === null && !preview && positions.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, totalPL.cost > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pm-total-row"
+  }, /*#__PURE__*/React.createElement("span", null, "Gesamt P&L"), /*#__PURE__*/React.createElement("span", {
+    className: totalPL.abs >= 0 ? "ch pos" : "ch neg"
+  }, totalPL.abs >= 0 ? "+" : "", totalPL.abs.toFixed(0), "$ (", totalPL.cost > 0 ? (totalPL.abs / totalPL.cost * 100).toFixed(1) : "–", "%)")), /*#__PURE__*/React.createElement("div", {
+    className: "pm-positions"
+  }, positions.map((p, i) => {
+    const pl = calcPL(p, quotes);
+    return /*#__PURE__*/React.createElement("div", {
+      className: "pm-pos-row",
+      key: i
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "tpill sm"
+    }, p.ticker), /*#__PURE__*/React.createElement("span", {
+      className: "pm-pshares"
+    }, p.shares, " Stk."), pl ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "pm-pcurrent"
+    }, "$", pl.current.toFixed(0)), /*#__PURE__*/React.createElement("span", {
+      className: pl.plPct >= 0 ? "ch pos" : "ch neg",
+      style: {
+        fontSize: 11
+      }
+    }, pl.plPct >= 0 ? "+" : "", pl.plPct.toFixed(1), "%")) : /*#__PURE__*/React.createElement("span", {
+      className: "pm-pcurrent",
+      style: {
+        color: "#8C8D90"
+      }
+    }, "–"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 4,
+        marginLeft: "auto"
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "pm-icon-btn",
+      onClick: () => startEdit(i)
+    }, "✏"), /*#__PURE__*/React.createElement("button", {
+      className: "pm-icon-btn del",
+      onClick: () => deletePos(i)
+    }, "✕")));
+  }))), editing === null && !preview && positions.length === 0 && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine Positionen. Importiere dein Portfolio oder füge Positionen manuell hinzu."))));
+}
+
 /* ---- Ticker-Band ---- */
 function Ticker({
   quotes
@@ -1330,9 +1916,28 @@ function Dashboard({
   const [rawNews, setRawNews] = useState([]);
   const [analysis, setAnalysis] = useState(null);
   const [quotesLoading, setQuotesLoading] = useState(true);
+  const [expandedType, setExpandedType] = useState(null);
+  const [myPositions, setMyPositions] = useState([]);
+  const [showPortfolioMgr, setShowPortfolioMgr] = useState(false);
   const [aiLoading, setAiLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
+
+  // Portfolio-Positionen laden
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await dbGet("myportfolio");
+        if (v) setMyPositions(JSON.parse(v));
+      } catch {}
+    })();
+  }, []);
+  async function saveMyPositions(positions) {
+    setMyPositions(positions);
+    try {
+      await dbSet("myportfolio", JSON.stringify(positions));
+    } catch {}
+  }
 
   // Layout laden
   useEffect(() => {
@@ -1455,7 +2060,8 @@ function Dashboard({
     rawNews,
     analysis,
     loading: aiLoading,
-    quotesLoading
+    quotesLoading,
+    myPositions
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "dsh"
@@ -1497,6 +2103,18 @@ function Dashboard({
   }, "Datenbankverbindung unterbrochen."), szOpen && /*#__PURE__*/React.createElement("div", {
     className: "bk",
     onClick: () => setSzOpen(null)
+  }), showPortfolioMgr && /*#__PURE__*/React.createElement(PortfolioManager, {
+    positions: myPositions,
+    quotes: quotes,
+    onSave: saveMyPositions,
+    onClose: () => setShowPortfolioMgr(false)
+  }), expandedType && /*#__PURE__*/React.createElement(WidgetModal, {
+    widgetType: expandedType,
+    onClose: () => setExpandedType(null),
+    analysis: analysis,
+    rawNews: rawNews,
+    quotes: quotes,
+    aiLoading: aiLoading
   }), /*#__PURE__*/React.createElement("main", {
     className: "gr"
   }, widgets.map((w, i) => {
@@ -1508,6 +2126,13 @@ function Dashboard({
       style: edit ? {
         animationDelay: i % 2 === 0 ? "0s" : "0.13s"
       } : undefined,
+      onClick: () => !edit && setExpandedType(w.type),
+      style: {
+        ...(edit ? {
+          animationDelay: i % 2 === 0 ? "0s" : "0.13s"
+        } : undefined),
+        cursor: edit ? "grab" : "pointer"
+      },
       draggable: edit,
       onDragStart: () => setDrag(w.id),
       onDragOver: e => {
@@ -1681,7 +2306,58 @@ function App() {
     .sp-small{width:14px;height:14px;}.sp-wide{width:26px;height:13px;}.sp-large{width:24px;height:24px;}
     .bk{position:fixed;inset:0;z-index:40;}
     *:focus-visible{outline:2px solid #3FC6C2;outline-offset:2px;}
+    /* Modal */
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);}
+    @media(min-width:600px){.modal-bg{align-items:center;}}
+    .modal-box{background:#1A1B1D;border:1px solid #323436;border-radius:20px 20px 0 0;width:100%;max-width:720px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+    @media(min-width:600px){.modal-box{border-radius:16px;max-height:85vh;}}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #323436;flex-shrink:0;}
+    .modal-title{font-weight:600;font-size:15px;color:#ECEAE5;}
+    .modal-close{background:#222426;border:1px solid #323436;color:#8C8D90;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;}
+    .modal-body{overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}
+    .modal-ticker-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+    .ticker-btn{background:#222426;border:1px solid #323436;color:#8C8D90;padding:5px 10px;border-radius:7px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;transition:border-color .15s;}
+    .ticker-btn.sel{border-color:#3FC6C2;color:#3FC6C2;}
+    .ticker-btn:hover{border-color:#3FC6C2;}
+    .tp{color:#5FAE7C;font-size:10px;}.tn{color:#C9695A;font-size:10px;}
+    .modal-quote-bar{display:flex;align-items:center;gap:14px;padding:10px 14px;background:#222426;border-radius:10px;margin-top:10px;}
+    .mqb-price{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;}
+    .mqb-change{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600;}
+    .mqb-prev{font-size:12px;color:#8C8D90;}
+    .modal-briefing{font-size:14px;line-height:1.6;color:#ECEAE5;padding:12px;background:#222426;border-radius:10px;}
+    .modal-loading{color:#8C8D90;font-size:14px;padding:20px;text-align:center;}
+    .modal-news-section{display:flex;flex-direction:column;gap:12px;}
+    .modal-news-row{display:flex;gap:10px;align-items:flex-start;}
+    .modal-news-headline{font-size:13.5px;line-height:1.4;color:#ECEAE5;margin-bottom:4px;}
+    .modal-news-reason{font-size:12px;color:#8C8D90;line-height:1.4;}
+    .modal-news-link{font-size:11px;color:#3FC6C2;text-decoration:none;display:inline-block;margin-top:4px;}
+    /* Hover-Effekt für klickbare Widgets */
+    .kc:not(.ed){cursor:pointer;}
+    .kc:not(.ed):active{transform:scale(.98);}
     @media(prefers-reduced-motion:reduce){.ttr{animation:none;}.kc.ed{animation:none;}.wloader{animation:none;}.skeleton{animation:none;}}
+    /* Portfolio Manager */
+    .pm-import-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+    .pm-btn{background:#222426;border:1px solid #323436;color:#ECEAE5;padding:8px 14px;border-radius:9px;font-size:13px;cursor:pointer;font-family:'Inter',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+    .pm-btn:hover{border-color:#3FC6C2;}.pm-btn.accent{background:#3FC6C2;color:#082422;border-color:#3FC6C2;font-weight:600;}
+    .pm-hint{font-size:13px;color:#8C8D90;line-height:1.5;margin:0 0 12px;}
+    .pm-upload-area{display:flex;flex-direction:column;gap:12px;}
+    .pm-file-label{background:#222426;border:2px dashed #323436;color:#3FC6C2;padding:20px;border-radius:12px;text-align:center;font-size:14px;cursor:pointer;transition:border-color .15s;}
+    .pm-file-label:hover{border-color:#3FC6C2;}
+    .pm-back{background:none;border:none;color:#8C8D90;font-size:13px;cursor:pointer;padding:4px 0;font-family:'Inter',sans-serif;}
+    .pm-preview-list{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
+    .pm-preview-row{display:flex;align-items:center;gap:10px;background:#222426;border-radius:8px;padding:8px 12px;}
+    .pm-pname{font-size:12px;color:#8C8D90;flex:1;}
+    .pm-pshares{font-size:12px;font-family:'IBM Plex Mono',monospace;color:#ECEAE5;}
+    .pm-pavg{font-size:11px;color:#8C8D90;font-family:'IBM Plex Mono',monospace;}
+    .pm-preview-actions{display:flex;gap:10px;align-items:center;}
+    .pm-edit-form{display:flex;flex-direction:column;gap:4px;}
+    .pm-total-row{display:flex;align-items:center;justify-content:space-between;background:#222426;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:600;}
+    .pm-positions{display:flex;flex-direction:column;gap:6px;}
+    .pm-pos-row{display:flex;align-items:center;gap:10px;background:#222426;border-radius:8px;padding:8px 12px;}
+    .pm-pcurrent{font-size:12px;font-family:'IBM Plex Mono',monospace;color:#ECEAE5;margin-left:auto;}
+    .pm-icon-btn{background:#1A1B1D;border:1px solid #323436;color:#8C8D90;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;}
+    .pm-icon-btn.del:hover{border-color:#C9695A;color:#C9695A;}
+    .pm-icon-btn:hover{border-color:#3FC6C2;color:#3FC6C2;}
     /* Kaufempfehlungen */
     .rec-card{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;margin-bottom:2px;}
     .rec-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
