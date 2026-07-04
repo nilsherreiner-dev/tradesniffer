@@ -20,10 +20,7 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-<script>
-/* Worker-URL */
-var PROXY_URL = "https://tradesniffer.tradesniffer.workers.dev";
-</script>
+<script>var PROXY_URL = "https://tradesniffer.tradesniffer.workers.dev";</script>
 <script>
 /* ================================================================
    TRADE SNIFFER – KI-gestützter Trading-Assistent
@@ -230,7 +227,7 @@ async function fetchAllNews() {
 
 /* ---- Anthropic: KI-Analyse ---- */
 async function analyzeWithClaude(news, quotes) {
-  const newsText = news.slice(0, 20).map(n => `[${n.ticker || "Markt"}] ${n.headline}`).join("\n");
+  const newsText = news.slice(0, 12).map(n => `[${n.ticker || "Markt"}] ${n.headline}`).join("\n");
   const quoteText = Object.entries(quotes).map(([t, q]) => `${t}: $${q.price?.toFixed(2)} (${q.change?.toFixed(2)}%)`).join(", ");
   const prompt = `Du bist mein persönlicher KI-Trading-Assistent. Ich bin Deutscher und handle US-Aktien.
 
@@ -286,7 +283,8 @@ Antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 1500,
+      max_tokens: 3000,
+      system: "Du bist ein persönlicher KI-Trading-Assistent für einen deutschen Privatanleger. Antworte IMMER ausschließlich mit validem JSON ohne Markdown-Formatierung, Erklärungen oder Präambel. Sei präzise, konkret und auf den Punkt.",
       messages: [{
         role: "user",
         content: prompt
@@ -1354,7 +1352,10 @@ function Dashboard({
             ...w,
             type: COMPAT[w.type] || w.type
           }));
-          setWidgets(parsed);
+          // Neue Widgets automatisch hinzufügen falls noch nicht im gespeicherten Layout
+          const savedTypes = new Set(parsed.map(w => w.type));
+          const missing = INIT_WIDGETS.filter(w => !savedTypes.has(w.type));
+          setWidgets([...parsed, ...missing]);
         }
       } catch (e) {
         console.warn("Layout laden fehlgeschlagen:", e);
@@ -1728,17 +1729,10 @@ function App() {
 ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));</script>
 <script>
 (function(){
-  var root=document.getElementById("root");
-  var boot=document.getElementById("boot");
-  var obs=new MutationObserver(function(){
-    if(root.children.length>0){if(boot)boot.style.display="none";obs.disconnect();}
-  });
+  var root=document.getElementById("root"),boot=document.getElementById("boot");
+  var obs=new MutationObserver(function(){if(root.children.length>0){boot.style.display="none";obs.disconnect();}});
   obs.observe(root,{childList:true,subtree:true});
-  setTimeout(function(){
-    if(root.children.length===0){
-      boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – Strg+Shift+R versuchen';
-    }
-  },10000);
+  setTimeout(function(){if(root.children.length===0)boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – Strg+Shift+R';},12000);
 })();
 </script>
 </body>
