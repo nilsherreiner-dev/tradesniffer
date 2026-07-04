@@ -21,7 +21,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script>
-/* Worker-URL – einzige Konfiguration die du hier anpassen musst */
+/* Worker-URL */
 var PROXY_URL = "https://tradesniffer.tradesniffer.workers.dev";
 </script>
 <script>
@@ -232,26 +232,51 @@ async function fetchAllNews() {
 async function analyzeWithClaude(news, quotes) {
   const newsText = news.slice(0, 20).map(n => `[${n.ticker || "Markt"}] ${n.headline}`).join("\n");
   const quoteText = Object.entries(quotes).map(([t, q]) => `${t}: $${q.price?.toFixed(2)} (${q.change?.toFixed(2)}%)`).join(", ");
-  const prompt = `Du bist mein persönlicher KI-Trading-Assistent. 
+  const prompt = `Du bist mein persönlicher KI-Trading-Assistent. Ich bin Deutscher und handle US-Aktien.
 
 Mein Portfolio: ${ALL_NAMES}
-Mein Trading-Stil: Mix aus langfristigen Positionen und kurzfristigen Momentum-Trades. 
-Schwerpunkt Quantencomputing und Verteidigung. Habe z.B. bei Everspin einen Swing-Trade gemacht und mein Geld verdoppelt.
+Trading-Stil: Mix aus langfristigen Positionen und kurzfristigen Momentum-Trades. 
+Schwerpunkt Quantencomputing (IONQ, QBTS, INFLQ) und Verteidigung (AVAV, RHM.DE).
+Habe bei Everspin (MRAM) mein Geld mit Swing-Trade verdoppelt – suche ähnliche Chancen.
 
-Aktuelle Kurse: ${quoteText || "Werden geladen..."}
+Aktuelle Kurse: ${quoteText || "Markt geschlossen oder Daten werden geladen"}
 
 Heutige Nachrichten:
 ${newsText}
 
-Analysiere alles und antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
+Antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
 {
-  "briefing": "2-3 Sätze: Was ist heute das Wichtigste für mein Portfolio?",
-  "watchOut": "Ein konkreter Hinweis was ich heute besonders beobachten sollte",
+  "briefing": "2-3 präzise Sätze zur heutigen Lage meines Portfolios",
+  "watchOut": "Konkretester Hinweis was ich HEUTE beobachten soll",
   "topNews": [
-    {"ticker":"NVDA","headline":"...","relevance":"hoch","reason":"...","sentiment":"pos"}
+    {"ticker":"NVDA","headline":"...","relevance":"hoch","reason":"warum relevant für mich","sentiment":"pos"}
   ],
   "opportunities": [
     {"ticker":"...","name":"...","reason":"...","confidence":80}
+  ],
+  "buyRecommendations": [
+    {
+      "ticker":"...",
+      "name":"...",
+      "action":"Kaufen",
+      "entryZone":"$X-Y",
+      "target":"$Z",
+      "timeframe":"X Wochen",
+      "confidence":75,
+      "risk":"mittel",
+      "reason":"3-4 Sätze detaillierte Begründung mit konkreten Katalysatoren"
+    }
+  ],
+  "dayTrading": [
+    {
+      "ticker":"...",
+      "setup":"Momentum-Long",
+      "entry":"$X",
+      "target":"$Y",
+      "stopLoss":"$Z",
+      "confidence":65,
+      "reason":"Kurze präzise Begründung für heute"
+    }
   ]
 }`;
   const resp = await fetch(`${PROXY_URL}/claude`, {
@@ -903,21 +928,186 @@ function WAlerts() {
     className: "at"
   }, "Preisalarme – demnächst verfügbar."));
 }
+
+/* ---- Widget: Kaufempfehlungen ---- */
+function WBuyRecs({
+  analysis,
+  loading
+}) {
+  const recs = analysis?.buyRecommendations;
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "KI-Analyse läuft …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  })));
+  if (!recs?.length) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "Tägliche KI-Empfehlungen"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine Empfehlungen – KI analysiert noch oder kein Handelstag."), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "Keine Anlageberatung – eigene Recherche erforderlich."));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "KI-basiert · Täglich aktualisiert"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "ail",
+    style: {
+      gap: 12
+    }
+  }, recs.slice(0, 3).map((r, i) => /*#__PURE__*/React.createElement("div", {
+    className: "rec-card",
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: r.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "rec-action"
+  }, r.action), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, r.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "rec-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rec-entry"
+  }, "Einstieg ", r.entryZone), /*#__PURE__*/React.createElement("span", {
+    className: "rec-sep"
+  }, "→"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-target"
+  }, "Ziel ", r.target), /*#__PURE__*/React.createElement("span", {
+    className: `rec-risk risk-${r.risk}`
+  }, r.risk)), /*#__PURE__*/React.createElement("p", {
+    className: "rec-timeframe"
+  }, r.timeframe), /*#__PURE__*/React.createElement("p", {
+    className: "ainote"
+  }, r.reason)))), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "KI-Einschätzung – keine Anlageberatung."));
+}
+
+/* ---- Widget: Day Trading ---- */
+function WDayTrading({
+  analysis,
+  loading
+}) {
+  const setups = analysis?.dayTrading;
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "Setups werden berechnet …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  })));
+  if (!setups?.length) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "Intraday-Setups"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Keine Setups verfügbar – außerhalb der Handelszeiten oder kein Katalysator erkannt."), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "US-Markt: Mo–Fr 15:30–22:00 Uhr MEZ"));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "KI-Setups für heute"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "ail",
+    style: {
+      gap: 10
+    }
+  }, setups.slice(0, 3).map((s, i) => /*#__PURE__*/React.createElement("div", {
+    className: "dt-card",
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: s.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dt-setup"
+  }, s.setup), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, s.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "dt-levels"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Entry"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val"
+  }, s.entry)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level pos"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Ziel"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val pos"
+  }, s.target)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level neg"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Stop"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val neg"
+  }, s.stopLoss))), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 5
+    }
+  }, s.reason)))), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "Kein Finanzrat – Handel auf eigenes Risiko."));
+}
 const WIDGET_MAP = {
   ai: props => /*#__PURE__*/React.createElement(WAI, props),
   news: props => /*#__PURE__*/React.createElement(WNews, props),
   portfolio: props => /*#__PURE__*/React.createElement(WPortfolio, props),
   watchlist: props => /*#__PURE__*/React.createElement(WWatchlist, props),
   movers: props => /*#__PURE__*/React.createElement(WMovers, props),
-  alerts: props => /*#__PURE__*/React.createElement(WAlerts, props)
+  alerts: props => /*#__PURE__*/React.createElement(WAlerts, props),
+  buyrecs: props => /*#__PURE__*/React.createElement(WBuyRecs, props),
+  daytrading: props => /*#__PURE__*/React.createElement(WDayTrading, props)
 };
 const INIT_WIDGETS = [{
   id: "ai",
   type: "ai",
   size: "large"
 }, {
+  id: "buyrecs",
+  type: "buyrecs",
+  size: "large"
+}, {
   id: "news",
   type: "news",
+  size: "wide"
+}, {
+  id: "daytrading",
+  type: "daytrading",
   size: "wide"
 }, {
   id: "portfolio",
@@ -1141,6 +1331,8 @@ function Dashboard({
   const [quotes, setQuotes] = useState({});
   const [rawNews, setRawNews] = useState([]);
   const [analysis, setAnalysis] = useState(null);
+  const [quotesLoading, setQuotesLoading] = useState(true);
+  const [aiLoading, setAiLoading] = useState(true);
   const [dataLoading, setDataLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -1193,26 +1385,45 @@ function Dashboard({
   }, []);
   async function loadData() {
     setDataLoading(true);
+    setQuotesLoading(true);
+    setAiLoading(true);
+
+    // Phase 1: Kurse sofort laden und anzeigen (schnell ~1-2s)
     try {
-      const [q, news] = await Promise.all([fetchAllQuotes(), fetchAllNews()]);
+      const q = await fetchAllQuotes();
       setQuotes(q);
-      setRawNews(news);
-      // KI-Analyse
-      try {
-        const ai = await analyzeWithClaude(news, q);
-        setAnalysis(ai);
-      } catch (e) {
-        console.warn("KI-Analyse fehlgeschlagen:", e);
-      }
       setLastUpdate(new Date().toLocaleTimeString("de-DE", {
         hour: "2-digit",
         minute: "2-digit"
       }));
     } catch (e) {
-      console.error("Daten-Laden fehlgeschlagen:", e);
-    } finally {
-      setDataLoading(false);
+      console.warn("Kurse fehlgeschlagen:", e);
     }
+    setQuotesLoading(false);
+
+    // Phase 2: News laden
+    let news = [];
+    try {
+      news = await fetchAllNews();
+      setRawNews(news);
+    } catch (e) {
+      console.warn("News fehlgeschlagen:", e);
+    }
+
+    // Phase 3: KI-Analyse im Hintergrund (langsam ~10-20s)
+    try {
+      const q = await fetchAllQuotes(); // frische Kurse für KI
+      const ai = await analyzeWithClaude(news, q);
+      setAnalysis(ai);
+    } catch (e) {
+      console.warn("KI-Analyse fehlgeschlagen:", e);
+    }
+    setAiLoading(false);
+    setDataLoading(false);
+    setLastUpdate(new Date().toLocaleTimeString("de-DE", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }));
   }
   function drop(tid) {
     if (!drag || drag === tid) {
@@ -1242,7 +1453,8 @@ function Dashboard({
     quotes,
     rawNews,
     analysis,
-    loading: dataLoading
+    loading: aiLoading,
+    quotesLoading
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "dsh"
@@ -1469,6 +1681,27 @@ function App() {
     .bk{position:fixed;inset:0;z-index:40;}
     *:focus-visible{outline:2px solid #3FC6C2;outline-offset:2px;}
     @media(prefers-reduced-motion:reduce){.ttr{animation:none;}.kc.ed{animation:none;}.wloader{animation:none;}.skeleton{animation:none;}}
+    /* Kaufempfehlungen */
+    .rec-card{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;margin-bottom:2px;}
+    .rec-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+    .rec-action{font-size:11px;font-weight:700;color:#5FAE7C;background:rgba(95,174,124,.15);padding:2px 7px;border-radius:5px;}
+    .rec-meta{display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px;flex-wrap:wrap;}
+    .rec-entry{color:#8C8D90;font-family:'IBM Plex Mono',monospace;}
+    .rec-sep{color:#323436;}
+    .rec-target{color:#5FAE7C;font-family:'IBM Plex Mono',monospace;font-weight:600;}
+    .rec-timeframe{font-size:10px;color:#8C8D90;margin:2px 0 5px;}
+    .rec-risk{font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600;}
+    .risk-niedrig{background:rgba(95,174,124,.2);color:#5FAE7C;}
+    .risk-mittel{background:rgba(201,160,77,.2);color:#C9A04D;}
+    .risk-hoch{background:rgba(201,105,90,.2);color:#C9695A;}
+    /* Day Trading */
+    .dt-card{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;margin-bottom:2px;}
+    .dt-setup{font-size:11px;color:#3FC6C2;font-weight:600;}
+    .dt-levels{display:flex;gap:10px;margin:6px 0 4px;flex-wrap:wrap;}
+    .dt-level{display:flex;flex-direction:column;align-items:center;background:#1A1B1D;border-radius:6px;padding:4px 8px;min-width:60px;}
+    .dt-lab{font-size:9px;color:#8C8D90;text-transform:uppercase;letter-spacing:.05em;}
+    .dt-val{font-size:12px;font-family:'IBM Plex Mono',monospace;font-weight:600;color:#ECEAE5;}
+    .dt-val.pos{color:#5FAE7C;}.dt-val.neg{color:#C9695A;}
   `;
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("style", null, CSS), screen === "setup" && /*#__PURE__*/React.createElement(Shell, {
     ch: /*#__PURE__*/React.createElement(Setup, {
