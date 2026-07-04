@@ -233,53 +233,12 @@ async function analyzeWithClaude(news, quotes) {
     return `${p.ticker}: ${p.shares} Anteile, Kaufpreis ~$${p.avgPrice}${pl ? ", aktuell $" + pl.price?.toFixed(2) + " (" + (pl.plPct >= 0 ? "+" : "") + pl.plPct?.toFixed(1) + "% P&L)" : ""}`;
   }).join("\n") : "";
   const quoteText = Object.entries(quotes).map(([t, q]) => `${t}: $${q.price?.toFixed(2)} (${q.change?.toFixed(2)}%)`).join(", ");
-  const prompt = `Du bist mein persönlicher KI-Trading-Assistent. Ich bin Deutscher und handle US-Aktien.
+  const prompt = `Portfolio: NVDA,AAPL,QBTS,MRAM,DOUG,IONQ,AVAV,RHM.DE,HTRO + Quantencomputing/Verteidigung Fokus.${posText}
+Kurse: ${quoteText || "Markt geschlossen"}.
+News: ${newsText}
 
-Mein Portfolio: ${ALL_NAMES}${positionsText}
-Trading-Stil: Mix aus langfristigen Positionen und kurzfristigen Momentum-Trades. 
-Schwerpunkt Quantencomputing (IONQ, QBTS, INFLQ) und Verteidigung (AVAV, RHM.DE).
-Habe bei Everspin (MRAM) mein Geld mit Swing-Trade verdoppelt – suche ähnliche Chancen.
-
-Aktuelle Kurse: ${quoteText || "Markt geschlossen oder Daten werden geladen"}
-
-Heutige Nachrichten:
-${newsText}
-
-Antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
-{
-  "briefing": "2-3 präzise Sätze zur heutigen Lage meines Portfolios",
-  "watchOut": "Konkretester Hinweis was ich HEUTE beobachten soll",
-  "topNews": [
-    {"ticker":"NVDA","headline":"...","relevance":"hoch","reason":"warum relevant für mich","sentiment":"pos"}
-  ],
-  "opportunities": [
-    {"ticker":"...","name":"...","reason":"...","confidence":80}
-  ],
-  "buyRecommendations": [
-    {
-      "ticker":"...",
-      "name":"...",
-      "action":"Kaufen",
-      "entryZone":"$X-Y",
-      "target":"$Z",
-      "timeframe":"X Wochen",
-      "confidence":75,
-      "risk":"mittel",
-      "reason":"3-4 Sätze detaillierte Begründung mit konkreten Katalysatoren"
-    }
-  ],
-  "dayTrading": [
-    {
-      "ticker":"...",
-      "setup":"Momentum-Long",
-      "entry":"$X",
-      "target":"$Y",
-      "stopLoss":"$Z",
-      "confidence":65,
-      "reason":"Kurze präzise Begründung für heute"
-    }
-  ]
-}`;
+JSON (kein Markdown, kein Text davor/danach):
+{"briefing":"2 Sätze Lage heute","watchOut":"1 konkreter Hinweis","topNews":[{"ticker":"","headline":"","sentiment":"pos","reason":""}],"opportunities":[{"ticker":"","name":"","reason":"","confidence":75}],"buyRecommendations":[{"ticker":"","name":"","action":"Kaufen","entryZone":"$X","target":"$Y","timeframe":"2 Wochen","confidence":70,"risk":"mittel","reason":""}],"dayTrading":[{"ticker":"","setup":"Momentum-Long","entry":"$X","target":"$Y","stopLoss":"$Z","confidence":65,"reason":""}]}`;
   const resp = await fetch(`${PROXY_URL}/claude`, {
     method: "POST",
     headers: {
@@ -287,7 +246,7 @@ Antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
-      max_tokens: 3000,
+      max_tokens: 2000,
       system: "Du bist ein persönlicher KI-Trading-Assistent für einen deutschen Privatanleger. Antworte IMMER ausschließlich mit validem JSON ohne Markdown-Formatierung, Erklärungen oder Präambel. Sei präzise, konkret und auf den Punkt.",
       messages: [{
         role: "user",
@@ -939,10 +898,14 @@ function WAI({
       s: 16
     }),
     title: "KI-Analyse",
-    sub: "Bereit"
+    sub: "Auf Aktualisieren tippen ↺"
   }), /*#__PURE__*/React.createElement("p", {
-    className: "wmuted"
-  }, "Keine Daten verfügbar."));
+    className: "wmuted",
+    style: {
+      fontSize: 13,
+      lineHeight: 1.5
+    }
+  }, "KI-Analyse lädt nach dem Aktualisieren.", /*#__PURE__*/React.createElement("br", null), "Kurse sind bereits live im Ticker."));
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
     icon: /*#__PURE__*/React.createElement(Stars, {
       s: 16
@@ -1951,7 +1914,9 @@ function Dashboard({
             pf: "portfolio",
             wl: "watchlist",
             mv: "movers",
-            al: "alerts"
+            al: "alerts",
+            buyrecs: "buyrecs",
+            daytrading: "daytrading"
           };
           const parsed = JSON.parse(v).map(w => ({
             ...w,
@@ -2018,8 +1983,7 @@ function Dashboard({
 
     // Phase 3: KI-Analyse im Hintergrund (langsam ~10-20s)
     try {
-      const q = await fetchAllQuotes(); // frische Kurse für KI
-      const ai = await analyzeWithClaude(news, q);
+      const ai = await analyzeWithClaude(news, quotes, myPositions);
       setAnalysis(ai);
     } catch (e) {
       console.warn("KI-Analyse fehlgeschlagen:", e);
