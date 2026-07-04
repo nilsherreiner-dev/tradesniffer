@@ -1,0 +1,2415 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Trade Sniffer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    body{margin:0;background:#08090A;font-family:'Inter',sans-serif;color:#ECEAE5;}
+    #boot{display:flex;align-items:center;justify-content:center;min-height:100vh;}
+    #boot-logo{color:#3FC6C2;font-family:'Fraunces',serif;font-size:22px;letter-spacing:.08em;margin-bottom:12px;text-align:center;}
+    #boot-msg{color:#8C8D90;font-size:14px;text-align:center;}
+  </style>
+</head>
+<body>
+<div id="boot"><div><div id="boot-logo">⬡ TRADE SNIFFER</div><div id="boot-msg">Wird geladen …</div></div></div>
+<div id="root"></div>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script>var PROXY_URL = "https://tradesniffer.tradesniffer.workers.dev";</script>
+<script>
+/* ================================================================
+   TRADE SNIFFER – KI-gestützter Trading-Assistent
+   ================================================================ */
+
+/* ---- Portfolio (deine Aktien) ---- */
+const PORTFOLIO = [{
+  ticker: "NVDA",
+  name: "NVIDIA",
+  sector: "KI / Chips",
+  region: "US"
+}, {
+  ticker: "AAPL",
+  name: "Apple",
+  sector: "Tech",
+  region: "US"
+}, {
+  ticker: "QBTS",
+  name: "D-Wave Systems",
+  sector: "Quantencomputer",
+  region: "US"
+}, {
+  ticker: "MRAM",
+  name: "Everspin Technologies",
+  sector: "Speicherchips",
+  region: "US"
+}, {
+  ticker: "DOUG",
+  name: "Douglas Elliman",
+  sector: "Immobilien",
+  region: "US"
+}, {
+  ticker: "IONQ",
+  name: "IonQ",
+  sector: "Quantencomputer",
+  region: "US"
+}, {
+  ticker: "AVAV",
+  name: "AeroVironment",
+  sector: "Verteidigung",
+  region: "US"
+}, {
+  ticker: "RHM.DE",
+  name: "Rheinmetall AG",
+  sector: "Rüstung",
+  region: "DE",
+  noQuote: true
+}, {
+  ticker: "HTRO",
+  name: "Hexatronic Group",
+  sector: "Glasfaser",
+  region: "SE",
+  noQuote: true
+}, {
+  ticker: "INFLQ",
+  name: "Infleqtion",
+  sector: "Quantencomputer",
+  region: "US",
+  noQuote: true
+}, {
+  ticker: "IEMS",
+  name: "iShares Edge MSCI",
+  sector: "ETF",
+  region: "US",
+  noQuote: true
+}, {
+  ticker: "QEM",
+  name: "Quantum Emotion",
+  sector: "Quantencomputer",
+  region: "FR",
+  noQuote: true
+}];
+const QUOTE_TICKERS = PORTFOLIO.filter(p => !p.noQuote);
+const ALL_NAMES = PORTFOLIO.map(p => `${p.name} (${p.ticker})`).join(", ");
+
+/* ---- Firebase ---- */
+firebase.initializeApp({
+  apiKey: "AIzaSyCN-xELCi0JHZTlyKqkN-Y1Jyp5Z3bbyDc",
+  authDomain: "tradesniffer-37962.firebaseapp.com",
+  projectId: "tradesniffer-37962",
+  storageBucket: "tradesniffer-37962.firebasestorage.app",
+  messagingSenderId: "815584285054",
+  appId: "1:815584285054:web:2aed3793cbd8bf8ed7e32f",
+  databaseURL: "https://tradesniffer-37962-default-rtdb.europe-west1.firebasedatabase.app"
+});
+const db = firebase.database();
+async function dbGet(k) {
+  try {
+    const s = await db.ref("ts/" + k).once("value");
+    return s.val();
+  } catch {
+    return null;
+  }
+}
+async function dbSet(k, v) {
+  await db.ref("ts/" + k).set(v);
+}
+async function dbDel(k) {
+  try {
+    await db.ref("ts/" + k).remove();
+  } catch {}
+}
+
+/* ---- Passwort ---- */
+async function hashPw(pw) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pw));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/* ---- Finnhub: Live-Kurse ---- */
+async function fetchQuote(ticker) {
+  try {
+    const r = await fetch(`${PROXY_URL}/finnhub`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        endpoint: "quote",
+        params: {
+          symbol: ticker
+        }
+      })
+    });
+    const d = await r.json();
+    if (!d || !d.c || d.c === 0) return null;
+    return {
+      price: d.c,
+      change: d.dp,
+      prev: d.pc
+    };
+  } catch {
+    return null;
+  }
+}
+async function fetchAllQuotes() {
+  const results = {};
+  await Promise.all(QUOTE_TICKERS.map(async p => {
+    const q = await fetchQuote(p.ticker);
+    if (q) results[p.ticker] = q;
+  }));
+  return results;
+}
+
+/* ---- Finnhub: News ---- */
+async function fetchNewsForTicker(ticker) {
+  const to = new Date().toISOString().split("T")[0];
+  const from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  try {
+    const r = await fetch(`${PROXY_URL}/finnhub`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        endpoint: "company-news",
+        params: {
+          symbol: ticker,
+          from,
+          to
+        }
+      })
+    });
+    const d = await r.json();
+    return Array.isArray(d) ? d.slice(0, 5).map(n => ({
+      ...n,
+      ticker
+    })) : [];
+  } catch {
+    return [];
+  }
+}
+async function fetchMarketNews() {
+  try {
+    const r = await fetch(`${PROXY_URL}/finnhub`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        endpoint: "news",
+        params: {
+          category: "general"
+        }
+      })
+    });
+    const d = await r.json();
+    return Array.isArray(d) ? d.slice(0, 10) : [];
+  } catch {
+    return [];
+  }
+}
+async function fetchAllNews() {
+  const [market, ...perStock] = await Promise.all([fetchMarketNews(), ...QUOTE_TICKERS.map(p => fetchNewsForTicker(p.ticker))]);
+  const stock = perStock.flat();
+  // Duplikate entfernen
+  const seen = new Set();
+  return [...stock, ...market].filter(n => {
+    if (seen.has(n.id || n.headline)) return false;
+    seen.add(n.id || n.headline);
+    return true;
+  }).slice(0, 25);
+}
+
+/* ---- Anthropic: KI-Analyse ---- */
+async function analyzeWithClaude(news, quotes) {
+  const newsText = news.slice(0, 12).map(n => `[${n.ticker || "Markt"}] ${n.headline}`).join("\n");
+  const positionsText = myPositions?.length > 0 ? "\nMeine echten Positionen:\n" + myPositions.map(p => {
+    const pl = calcPL(p, quotes);
+    return `${p.ticker}: ${p.shares} Anteile, Kaufpreis ~$${p.avgPrice}${pl ? ", aktuell $" + pl.price?.toFixed(2) + " (" + (pl.plPct >= 0 ? "+" : "") + pl.plPct?.toFixed(1) + "% P&L)" : ""}`;
+  }).join("\n") : "";
+  const quoteText = Object.entries(quotes).map(([t, q]) => `${t}: $${q.price?.toFixed(2)} (${q.change?.toFixed(2)}%)`).join(", ");
+  const prompt = `Du bist mein persönlicher KI-Trading-Assistent. Ich bin Deutscher und handle US-Aktien.
+
+Mein Portfolio: ${ALL_NAMES}${positionsText}
+Trading-Stil: Mix aus langfristigen Positionen und kurzfristigen Momentum-Trades. 
+Schwerpunkt Quantencomputing (IONQ, QBTS, INFLQ) und Verteidigung (AVAV, RHM.DE).
+Habe bei Everspin (MRAM) mein Geld mit Swing-Trade verdoppelt – suche ähnliche Chancen.
+
+Aktuelle Kurse: ${quoteText || "Markt geschlossen oder Daten werden geladen"}
+
+Heutige Nachrichten:
+${newsText}
+
+Antworte NUR in diesem JSON-Format (kein Text davor oder danach, kein Markdown):
+{
+  "briefing": "2-3 präzise Sätze zur heutigen Lage meines Portfolios",
+  "watchOut": "Konkretester Hinweis was ich HEUTE beobachten soll",
+  "topNews": [
+    {"ticker":"NVDA","headline":"...","relevance":"hoch","reason":"warum relevant für mich","sentiment":"pos"}
+  ],
+  "opportunities": [
+    {"ticker":"...","name":"...","reason":"...","confidence":80}
+  ],
+  "buyRecommendations": [
+    {
+      "ticker":"...",
+      "name":"...",
+      "action":"Kaufen",
+      "entryZone":"$X-Y",
+      "target":"$Z",
+      "timeframe":"X Wochen",
+      "confidence":75,
+      "risk":"mittel",
+      "reason":"3-4 Sätze detaillierte Begründung mit konkreten Katalysatoren"
+    }
+  ],
+  "dayTrading": [
+    {
+      "ticker":"...",
+      "setup":"Momentum-Long",
+      "entry":"$X",
+      "target":"$Y",
+      "stopLoss":"$Z",
+      "confidence":65,
+      "reason":"Kurze präzise Begründung für heute"
+    }
+  ]
+}`;
+  const resp = await fetch(`${PROXY_URL}/claude`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 3000,
+      system: "Du bist ein persönlicher KI-Trading-Assistent für einen deutschen Privatanleger. Antworte IMMER ausschließlich mit validem JSON ohne Markdown-Formatierung, Erklärungen oder Präambel. Sei präzise, konkret und auf den Punkt.",
+      messages: [{
+        role: "user",
+        content: prompt
+      }]
+    })
+  });
+  const data = await resp.json();
+  if (!data.content?.[0]?.text) throw new Error("Keine Antwort von Claude");
+  const text = data.content[0].text.replace(/```json|```/g, "").trim();
+  return JSON.parse(text);
+}
+
+/* ---- React ---- */
+/* ---- Error Boundary – zeigt Fehler sichtbar statt schwarzem Bildschirm ---- */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      error: null
+    };
+  }
+  static getDerivedStateFromError(e) {
+    return {
+      error: e
+    };
+  }
+  render() {
+    if (this.state.error) return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#08090A",
+        padding: 24
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        maxWidth: 480,
+        background: "#1A1B1D",
+        border: "1px solid #C9695A",
+        borderRadius: 14,
+        padding: 28
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#3FC6C2",
+        fontFamily: "Fraunces,serif",
+        fontSize: 16,
+        marginBottom: 14
+      }
+    }, "⬡ TRADE SNIFFER"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#C9695A",
+        fontWeight: 600,
+        marginBottom: 10
+      }
+    }, "⚠ Fehler beim Laden"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: "#8C8D90",
+        fontSize: 13,
+        fontFamily: "monospace",
+        lineHeight: 1.6,
+        wordBreak: "break-all"
+      }
+    }, this.state.error.message), /*#__PURE__*/React.createElement("button", {
+      onClick: () => this.setState({
+        error: null
+      }),
+      style: {
+        marginTop: 18,
+        padding: "10px 20px",
+        background: "#3FC6C2",
+        color: "#082422",
+        border: "none",
+        borderRadius: 8,
+        cursor: "pointer",
+        fontFamily: "Inter,sans-serif",
+        fontWeight: 600
+      }
+    }, "Nochmal versuchen")));
+    return this.props.children;
+  }
+}
+const {
+  useState,
+  useEffect
+} = React;
+
+/* ---- Icons ---- */
+const Svg = ({
+  s = 16,
+  cl = "",
+  ch
+}) => /*#__PURE__*/React.createElement("svg", {
+  width: s,
+  height: s,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "2",
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  className: cl
+}, ch);
+const Lock = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("rect", {
+    key: "r",
+    x: "3",
+    y: "11",
+    width: "18",
+    height: "11",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    key: "p",
+    d: "M7 11V7a5 5 0 0 1 10 0v4"
+  })]
+});
+const Eye = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+  }), /*#__PURE__*/React.createElement("circle", {
+    key: "b",
+    cx: "12",
+    cy: "12",
+    r: "3"
+  })]
+});
+const EyeOff = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
+  }), /*#__PURE__*/React.createElement("line", {
+    key: "b",
+    x1: "1",
+    y1: "1",
+    x2: "23",
+    y2: "23"
+  })]
+});
+const Stars = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: /*#__PURE__*/React.createElement("path", {
+    d: "M12 2 9 9H2l5.5 4L5 20l7-4 7 4-2.5-7L22 9h-7z"
+  })
+});
+const News_ = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"
+  }), /*#__PURE__*/React.createElement("path", {
+    key: "b",
+    d: "M18 14h-8M15 18h-5M10 6h8v4h-8z"
+  })]
+});
+const Wlt = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"
+  }), /*#__PURE__*/React.createElement("path", {
+    key: "b",
+    d: "M16 12h5v4h-5a2 2 0 0 1 0-4z"
+  })]
+});
+const Str = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: /*#__PURE__*/React.createElement("polygon", {
+    points: "12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+  })
+});
+const TrUp = ({
+  s = 16,
+  cl = ""
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  cl: cl,
+  ch: [/*#__PURE__*/React.createElement("polyline", {
+    key: "a",
+    points: "23 6 13.5 15.5 8.5 10.5 1 18"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    key: "b",
+    points: "17 6 23 6 23 12"
+  })]
+});
+const TrDn = ({
+  s = 16,
+  cl = ""
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  cl: cl,
+  ch: [/*#__PURE__*/React.createElement("polyline", {
+    key: "a",
+    points: "23 18 13.5 8.5 8.5 13.5 1 6"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    key: "b",
+    points: "17 18 23 18 23 12"
+  })]
+});
+const Bell_ = ({
+  s = 16
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"
+  }), /*#__PURE__*/React.createElement("path", {
+    key: "b",
+    d: "M13.73 21a2 2 0 0 1-3.46 0"
+  })]
+});
+const Grip = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [5, 12, 19].flatMap(y => [9, 15].map(x => /*#__PURE__*/React.createElement("circle", {
+    key: x + "," + y,
+    cx: x,
+    cy: y,
+    r: "1.2",
+    fill: "currentColor",
+    stroke: "none"
+  })))
+});
+const Grid_ = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [[3, 3], [14, 3], [14, 14], [3, 14]].map(([x, y]) => /*#__PURE__*/React.createElement("rect", {
+    key: x + y,
+    x: x,
+    y: y,
+    width: "7",
+    height: "7"
+  }))
+});
+const Chk = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: /*#__PURE__*/React.createElement("polyline", {
+    points: "20 6 9 17 4 12"
+  })
+});
+const Out_ = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("path", {
+    key: "a",
+    d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    key: "b",
+    points: "16 17 21 12 16 7"
+  }), /*#__PURE__*/React.createElement("line", {
+    key: "c",
+    x1: "21",
+    y1: "12",
+    x2: "9",
+    y2: "12"
+  })]
+});
+const ArrU = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("line", {
+    key: "a",
+    x1: "7",
+    y1: "17",
+    x2: "17",
+    y2: "7"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    key: "b",
+    points: "7 7 17 7 17 17"
+  })]
+});
+const ArrD = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("line", {
+    key: "a",
+    x1: "7",
+    y1: "7",
+    x2: "17",
+    y2: "17"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    key: "b",
+    points: "17 7 17 17 7 17"
+  })]
+});
+const Ref = ({
+  s = 14
+}) => /*#__PURE__*/React.createElement(Svg, {
+  s: s,
+  ch: [/*#__PURE__*/React.createElement("polyline", {
+    key: "a",
+    points: "1 4 1 10 7 10"
+  }), /*#__PURE__*/React.createElement("path", {
+    key: "b",
+    d: "M3.51 15a9 9 0 1 0 .49-3.51"
+  })]
+});
+
+/* ---- Hilfskomponenten ---- */
+
+/* ---- TradingView Symbol-Mapping ---- */
+const TV_SYMBOLS = {
+  NVDA: "NASDAQ:NVDA",
+  AAPL: "NASDAQ:AAPL",
+  QBTS: "NYSE:QBTS",
+  MRAM: "NASDAQ:MRAM",
+  DOUG: "NYSE:DOUG",
+  IONQ: "NYSE:IONQ",
+  AVAV: "NASDAQ:AVAV",
+  "RHM.DE": "XETR:RHM",
+  HTRO: "OMX:HTRO"
+};
+function TVChart({
+  ticker
+}) {
+  const sym = TV_SYMBOLS[ticker] || "NASDAQ:" + ticker;
+  const url = "https://s.tradingview.com/widgetembed/?symbol=" + encodeURIComponent(sym) + "&interval=D&hidesidetoolbar=0&symboledit=1&theme=dark&style=1&locale=de&toolbarbg=131313&withdateranges=1";
+  return /*#__PURE__*/React.createElement("iframe", {
+    src: url,
+    style: {
+      width: "100%",
+      height: "420px",
+      border: "none",
+      borderRadius: 10
+    },
+    allowFullScreen: true,
+    title: "Chart " + ticker
+  });
+}
+function WidgetModal({
+  widgetType,
+  onClose,
+  analysis,
+  rawNews,
+  quotes,
+  aiLoading
+}) {
+  const [chartTicker, setChartTicker] = useState("NVDA");
+  const isChart = ["watchlist", "portfolio", "movers", "daytrading", "alerts"].includes(widgetType);
+  const titles = {
+    ai: "KI-Analyse",
+    news: "Nachrichten",
+    portfolio: "Portfolio",
+    watchlist: "Watchlist – Charts",
+    movers: "Tagesbewegung",
+    buyrecs: "Kaufempfehlungen",
+    daytrading: "Day Trading",
+    alerts: "Preisalarme"
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-bg",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-box",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-header"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "modal-title"
+  }, titles[widgetType] || widgetType), /*#__PURE__*/React.createElement("button", {
+    className: "modal-close",
+    onClick: onClose
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "modal-body"
+  }, isChart && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-ticker-row"
+  }, QUOTE_TICKERS.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.ticker,
+    className: "ticker-btn " + (chartTicker === p.ticker ? "sel" : ""),
+    onClick: () => setChartTicker(p.ticker)
+  }, p.ticker, quotes[p.ticker] && /*#__PURE__*/React.createElement("span", {
+    className: quotes[p.ticker].change >= 0 ? " tp" : " tn"
+  }, " ", quotes[p.ticker].change >= 0 ? "↑" : "↓", Math.abs(quotes[p.ticker].change).toFixed(1), "%")))), /*#__PURE__*/React.createElement(TVChart, {
+    ticker: chartTicker
+  }), quotes[chartTicker] && /*#__PURE__*/React.createElement("div", {
+    className: "modal-quote-bar"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "mqb-price"
+  }, "$", quotes[chartTicker].price?.toFixed(2)), /*#__PURE__*/React.createElement("span", {
+    className: "mqb-change " + (quotes[chartTicker].change >= 0 ? "pos" : "neg")
+  }, quotes[chartTicker].change >= 0 ? "▲" : "▼", " ", Math.abs(quotes[chartTicker].change).toFixed(2), "%"), /*#__PURE__*/React.createElement("span", {
+    className: "mqb-prev"
+  }, "Vortag $", quotes[chartTicker].prev?.toFixed(2)))), (widgetType === "ai" || widgetType === "buyrecs") && /*#__PURE__*/React.createElement(React.Fragment, null, aiLoading && /*#__PURE__*/React.createElement("div", {
+    className: "modal-loading"
+  }, "KI analysiert…"), !aiLoading && analysis && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-briefing"
+  }, analysis.briefing), analysis.watchOut && /*#__PURE__*/React.createElement("div", {
+    className: "watchout",
+    style: {
+      margin: "12px 0"
+    }
+  }, "⚠ ", analysis.watchOut), analysis.buyRecommendations?.map((r, i) => /*#__PURE__*/React.createElement("div", {
+    className: "rec-card",
+    key: i,
+    style: {
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: r.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "rec-action"
+  }, r.action), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, r.confidence, "%"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-risk risk-" + r.risk
+  }, r.risk)), /*#__PURE__*/React.createElement("div", {
+    className: "rec-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rec-entry"
+  }, "Einstieg ", r.entryZone), /*#__PURE__*/React.createElement("span", {
+    className: "rec-sep"
+  }, "→"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-target"
+  }, "Ziel ", r.target), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: "#8C8D90",
+      fontSize: 11
+    }
+  }, r.timeframe)), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 6
+    }
+  }, r.reason))), analysis.opportunities?.map((o, i) => /*#__PURE__*/React.createElement("div", {
+    className: "opp",
+    key: i,
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "opp-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: o.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, o.confidence, "%")), /*#__PURE__*/React.createElement("p", {
+    className: "opp-reason"
+  }, o.reason)))), !aiLoading && !analysis && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine KI-Analyse – Aktualisieren zum Starten.")), widgetType === "daytrading" && analysis?.dayTrading?.map((s, i) => /*#__PURE__*/React.createElement("div", {
+    className: "dt-card",
+    key: i,
+    style: {
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: s.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dt-setup"
+  }, s.setup), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, s.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "dt-levels"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Entry"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val"
+  }, s.entry)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Ziel"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val pos"
+  }, s.target)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Stop"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val neg"
+  }, s.stopLoss))), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 8
+    }
+  }, s.reason))), widgetType === "news" && /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-section"
+  }, (analysis?.topNews?.length ? analysis.topNews : rawNews.slice(0, 20)).map((n, i) => /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-row",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt dt-" + (n.sentiment || "neu"),
+    style: {
+      marginTop: 4
+    }
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-headline"
+  }, n.headline), n.reason && /*#__PURE__*/React.createElement("div", {
+    className: "modal-news-reason"
+  }, n.reason), n.url && /*#__PURE__*/React.createElement("a", {
+    href: n.url,
+    target: "_blank",
+    rel: "noreferrer",
+    className: "modal-news-link"
+  }, "Artikel lesen →"))))))));
+}
+function Change({
+  v,
+  sm
+}) {
+  if (v === undefined || v === null) return /*#__PURE__*/React.createElement("span", {
+    className: "ch neu"
+  }, "–");
+  const pos = v >= 0;
+  return /*#__PURE__*/React.createElement("span", {
+    className: `ch ${pos ? "pos" : "neg"}`
+  }, pos ? /*#__PURE__*/React.createElement(ArrU, {
+    s: sm ? 11 : 13
+  }) : /*#__PURE__*/React.createElement(ArrD, {
+    s: sm ? 11 : 13
+  }), Math.abs(v).toFixed(2), "%");
+}
+function Pill({
+  t
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "tpill"
+  }, t);
+}
+function PillSm({
+  t
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: "tpill sm"
+  }, t);
+}
+function WHead({
+  icon,
+  title,
+  sub,
+  loading
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "wh"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wi"
+  }, icon), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wt"
+  }, title), sub && /*#__PURE__*/React.createElement("div", {
+    className: "ws"
+  }, sub)), loading && /*#__PURE__*/React.createElement("div", {
+    className: "wloader"
+  }));
+}
+function Sparkline({
+  data
+}) {
+  if (!data || data.length < 2) return null;
+  const mx = Math.max(...data),
+    mn = Math.min(...data),
+    w = 120,
+    h = 50,
+    r = mx - mn || 1;
+  const pts = data.map((v, i) => `${i / (data.length - 1) * w},${h - (v - mn) / r * h}`).join(" ");
+  const area = `M${pts.replace(/ /g, " L")} L${w},${h} L0,${h} Z`;
+  return /*#__PURE__*/React.createElement("svg", {
+    viewBox: `0 0 ${w} ${h}`,
+    style: {
+      width: "100%",
+      height: "100%",
+      overflow: "visible"
+    }
+  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
+    id: "sg",
+    x1: "0",
+    y1: "0",
+    x2: "0",
+    y2: "1"
+  }, /*#__PURE__*/React.createElement("stop", {
+    offset: "0%",
+    stopColor: "#5FAE7C",
+    stopOpacity: ".45"
+  }), /*#__PURE__*/React.createElement("stop", {
+    offset: "100%",
+    stopColor: "#5FAE7C",
+    stopOpacity: "0"
+  }))), /*#__PURE__*/React.createElement("path", {
+    d: area,
+    fill: "url(#sg)"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    points: pts,
+    fill: "none",
+    stroke: "#5FAE7C",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }));
+}
+
+/* ---- Widget: KI-Recherche ---- */
+function WAI({
+  analysis,
+  loading
+}) {
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Stars, {
+      s: 16
+    }),
+    title: "KI-Analyse",
+    sub: "Wird analysiert …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton sm"
+  })));
+  if (!analysis) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Stars, {
+      s: 16
+    }),
+    title: "KI-Analyse",
+    sub: "Bereit"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Keine Daten verfügbar."));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Stars, {
+      s: 16
+    }),
+    title: "KI-Analyse",
+    sub: "Persönliche Einschätzung"
+  }), analysis.briefing && /*#__PURE__*/React.createElement("p", {
+    className: "briefing"
+  }, analysis.briefing), analysis.watchOut && /*#__PURE__*/React.createElement("div", {
+    className: "watchout"
+  }, "⚠ ", analysis.watchOut), analysis.opportunities?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "opp-list"
+  }, analysis.opportunities.slice(0, 3).map((o, i) => /*#__PURE__*/React.createElement("div", {
+    className: "opp",
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "opp-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: o.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, o.confidence, "%")), /*#__PURE__*/React.createElement("p", {
+    className: "opp-reason"
+  }, o.reason)))), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "KI-Analyse – keine Anlageberatung."));
+}
+
+/* ---- Widget: Nachrichten ---- */
+function WNews({
+  analysis,
+  rawNews,
+  loading
+}) {
+  const items = analysis?.topNews?.length ? analysis.topNews : rawNews?.slice(0, 5).map(n => ({
+    ticker: n.ticker || "Markt",
+    headline: n.headline,
+    sentiment: "neu",
+    reason: ""
+  }));
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(News_, {
+      s: 16
+    }),
+    title: "Nachrichten",
+    sub: "Werden geladen …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  })));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(News_, {
+      s: 16
+    }),
+    title: "Nachrichten",
+    sub: "KI-priorisiert nach Relevanz"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "nl"
+  }, (items || []).slice(0, 6).map((n, i) => /*#__PURE__*/React.createElement("div", {
+    className: "nr",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `dt dt-${n.sentiment || "neu"}`
+  }), /*#__PURE__*/React.createElement(PillSm, {
+    t: n.ticker || "Markt"
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "nx",
+    title: n.reason || n.headline
+  }, n.headline))), (!items || items.length === 0) && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Keine aktuellen News gefunden.")));
+}
+
+/* ---- Widget: Portfolio ---- */
+function WPortfolio({
+  quotes,
+  loading,
+  myPositions
+}) {
+  const hasPositions = myPositions?.length > 0;
+  const plData = hasPositions ? myPositions.map(p => calcPL(p, quotes)).filter(Boolean) : [];
+  const totalCurrent = plData.reduce((s, p) => s + p.current, 0);
+  const totalCost = plData.reduce((s, p) => s + p.cost, 0);
+  const totalPLPct = totalCost > 0 ? (totalCurrent - totalCost) / totalCost * 100 : null;
+  const stocks = QUOTE_TICKERS.filter(p => quotes[p.ticker]);
+  const avgChange = stocks.length ? stocks.reduce((s, p) => s + (quotes[p.ticker]?.change || 0), 0) / stocks.length : null;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Wlt, {
+      s: 16
+    }),
+    title: "Portfolio",
+    sub: hasPositions ? totalCurrent > 0 ? "Gesamtwert" : "Positionen" : "Deine Positionen",
+    loading: loading && !stocks.length
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "pfr"
+  }, /*#__PURE__*/React.createElement("div", null, hasPositions && totalCurrent > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "pfv"
+  }, totalCurrent.toLocaleString("de-DE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }), " $"), totalPLPct !== null && /*#__PURE__*/React.createElement(Change, {
+    v: totalPLPct
+  })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "pfv"
+  }, myPositions?.length || PORTFOLIO.length, " Positionen"), avgChange !== null && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "pflab"
+  }, "Ø "), /*#__PURE__*/React.createElement(Change, {
+    v: avgChange
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "spk"
+  }, /*#__PURE__*/React.createElement(Sparkline, {
+    data: [100, 102, 98, 105, 103, 108, 112, 109, 115, 118]
+  }))));
+}
+
+/* ---- Widget: Watchlist ---- */
+function WWatchlist({
+  quotes,
+  loading
+}) {
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Watchlist",
+    sub: "Live-Kurse",
+    loading: loading
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "wll"
+  }, QUOTE_TICKERS.slice(0, 4).map(p => {
+    const q = quotes[p.ticker];
+    return /*#__PURE__*/React.createElement("div", {
+      className: "wr",
+      key: p.ticker
+    }, /*#__PURE__*/React.createElement(PillSm, {
+      t: p.ticker
+    }), /*#__PURE__*/React.createElement("span", {
+      className: "wp"
+    }, q ? `$${q.price?.toFixed(2)}` : "–"), /*#__PURE__*/React.createElement(Change, {
+      v: q?.change,
+      sm: true
+    }));
+  })));
+}
+
+/* ---- Widget: Tagesbewegung ---- */
+function WMovers({
+  quotes
+}) {
+  const stocks = QUOTE_TICKERS.map(p => ({
+    ...p,
+    ch: quotes[p.ticker]?.change
+  })).filter(p => p.ch !== undefined).sort((a, b) => b.ch - a.ch);
+  const gainer = stocks[0];
+  const loser = stocks[stocks.length - 1];
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Tagesbewegung"
+  }), gainer && /*#__PURE__*/React.createElement("div", {
+    className: "mr"
+  }, /*#__PURE__*/React.createElement(TrUp, {
+    s: 14,
+    cl: "ip"
+  }), /*#__PURE__*/React.createElement(PillSm, {
+    t: gainer.ticker
+  }), /*#__PURE__*/React.createElement(Change, {
+    v: gainer.ch,
+    sm: true
+  })), loser && /*#__PURE__*/React.createElement("div", {
+    className: "mr"
+  }, /*#__PURE__*/React.createElement(TrDn, {
+    s: 14,
+    cl: "in"
+  }), /*#__PURE__*/React.createElement(PillSm, {
+    t: loser.ticker
+  }), /*#__PURE__*/React.createElement(Change, {
+    v: loser.ch,
+    sm: true
+  })), !gainer && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Lädt…"));
+}
+
+/* ---- Widget: Preisalarm ---- */
+function WAlerts() {
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Bell_, {
+      s: 16
+    }),
+    title: "Preisalarm"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "at"
+  }, "Preisalarme – demnächst verfügbar."));
+}
+
+/* ---- Widget: Kaufempfehlungen ---- */
+function WBuyRecs({
+  analysis,
+  loading
+}) {
+  const recs = analysis?.buyRecommendations;
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "KI-Analyse läuft …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  })));
+  if (!recs?.length) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "Tägliche KI-Empfehlungen"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine Empfehlungen – KI analysiert noch oder kein Handelstag."), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "Keine Anlageberatung – eigene Recherche erforderlich."));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(TrUp, {
+      s: 16
+    }),
+    title: "Kaufempfehlungen",
+    sub: "KI-basiert · Täglich aktualisiert"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "ail",
+    style: {
+      gap: 12
+    }
+  }, recs.slice(0, 3).map((r, i) => /*#__PURE__*/React.createElement("div", {
+    className: "rec-card",
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: r.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "rec-action"
+  }, r.action), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, r.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "rec-meta"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "rec-entry"
+  }, "Einstieg ", r.entryZone), /*#__PURE__*/React.createElement("span", {
+    className: "rec-sep"
+  }, "→"), /*#__PURE__*/React.createElement("span", {
+    className: "rec-target"
+  }, "Ziel ", r.target), /*#__PURE__*/React.createElement("span", {
+    className: `rec-risk risk-${r.risk}`
+  }, r.risk)), /*#__PURE__*/React.createElement("p", {
+    className: "rec-timeframe"
+  }, r.timeframe), /*#__PURE__*/React.createElement("p", {
+    className: "ainote"
+  }, r.reason)))), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "KI-Einschätzung – keine Anlageberatung."));
+}
+
+/* ---- Widget: Day Trading ---- */
+function WDayTrading({
+  analysis,
+  loading
+}) {
+  const setups = analysis?.dayTrading;
+  if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "Setups werden berechnet …",
+    loading: true
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton-list"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "skeleton"
+  })));
+  if (!setups?.length) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "Intraday-Setups"
+  }), /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Keine Setups verfügbar – außerhalb der Handelszeiten oder kein Katalysator erkannt."), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "US-Markt: Mo–Fr 15:30–22:00 Uhr MEZ"));
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
+    icon: /*#__PURE__*/React.createElement(Str, {
+      s: 16
+    }),
+    title: "Day Trading",
+    sub: "KI-Setups für heute"
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "ail",
+    style: {
+      gap: 10
+    }
+  }, setups.slice(0, 3).map((s, i) => /*#__PURE__*/React.createElement("div", {
+    className: "dt-card",
+    key: i
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rec-top"
+  }, /*#__PURE__*/React.createElement(Pill, {
+    t: s.ticker
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "dt-setup"
+  }, s.setup), /*#__PURE__*/React.createElement("span", {
+    className: "conf"
+  }, s.confidence, "%")), /*#__PURE__*/React.createElement("div", {
+    className: "dt-levels"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dt-level"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Entry"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val"
+  }, s.entry)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level pos"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Ziel"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val pos"
+  }, s.target)), /*#__PURE__*/React.createElement("div", {
+    className: "dt-level neg"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dt-lab"
+  }, "Stop"), /*#__PURE__*/React.createElement("span", {
+    className: "dt-val neg"
+  }, s.stopLoss))), /*#__PURE__*/React.createElement("p", {
+    className: "ainote",
+    style: {
+      marginTop: 5
+    }
+  }, s.reason)))), /*#__PURE__*/React.createElement("p", {
+    className: "wf"
+  }, "Kein Finanzrat – Handel auf eigenes Risiko."));
+}
+const WIDGET_MAP = {
+  ai: props => /*#__PURE__*/React.createElement(WAI, props),
+  news: props => /*#__PURE__*/React.createElement(WNews, props),
+  portfolio: props => /*#__PURE__*/React.createElement(WPortfolio, props),
+  watchlist: props => /*#__PURE__*/React.createElement(WWatchlist, props),
+  movers: props => /*#__PURE__*/React.createElement(WMovers, props),
+  alerts: props => /*#__PURE__*/React.createElement(WAlerts, props),
+  buyrecs: props => /*#__PURE__*/React.createElement(WBuyRecs, props),
+  daytrading: props => /*#__PURE__*/React.createElement(WDayTrading, props)
+};
+const INIT_WIDGETS = [{
+  id: "ai",
+  type: "ai",
+  size: "large"
+}, {
+  id: "buyrecs",
+  type: "buyrecs",
+  size: "large"
+}, {
+  id: "news",
+  type: "news",
+  size: "wide"
+}, {
+  id: "daytrading",
+  type: "daytrading",
+  size: "wide"
+}, {
+  id: "portfolio",
+  type: "portfolio",
+  size: "wide"
+}, {
+  id: "watchlist",
+  type: "watchlist",
+  size: "small"
+}, {
+  id: "movers",
+  type: "movers",
+  size: "small"
+}, {
+  id: "alerts",
+  type: "alerts",
+  size: "small"
+}];
+
+/* ================================================================
+   PORTFOLIO MANAGER
+   ================================================================ */
+
+async function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = () => rej(new Error("Datei konnte nicht gelesen werden"));
+    r.readAsDataURL(file);
+  });
+}
+function calcPL(pos, quotes) {
+  const q = quotes[pos.ticker];
+  if (!q || !pos.shares || !pos.avgPrice) return null;
+  const current = q.price * pos.shares;
+  const cost = pos.avgPrice * pos.shares;
+  const plAbs = current - cost;
+  const plPct = (current - cost) / cost * 100;
+  return {
+    current,
+    cost,
+    plAbs,
+    plPct,
+    price: q.price
+  };
+}
+function PortfolioManager({
+  positions,
+  quotes,
+  onSave,
+  onClose
+}) {
+  const [mode, setMode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState(null); // index
+  const [editForm, setEditForm] = useState({
+    ticker: "",
+    name: "",
+    shares: "",
+    avgPrice: "",
+    currency: "USD"
+  });
+  const CSV_TEMPLATE = "data:text/csv;charset=utf-8,Ticker,Name,Anteile,Kaufpreis_EUR,W%C3%A4hrung%0ANVDA,NVIDIA,10,150.00,USD%0AAAPL,Apple,5,180.00,USD";
+  async function handleScreenshot(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    setBusy(true);
+    try {
+      const b64 = await fileToBase64(file);
+      const resp = await fetch(PROXY_URL + "/claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 2000,
+          system: "Du extrahierst Portfolio-Daten aus Screenshots. Antworte NUR mit validem JSON ohne Markdown.",
+          messages: [{
+            role: "user",
+            content: [{
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: file.type || "image/jpeg",
+                data: b64
+              }
+            }, {
+              type: "text",
+              text: `Extrahiere alle Aktienpositionen aus diesem Portfolio-Screenshot.
+Antworte NUR mit diesem JSON (kein Text davor/danach):
+{"positions":[{"ticker":"NVDA","name":"NVIDIA","shares":10.5,"avgPrice":150.00,"currency":"USD"}],"broker":"Trade Republic"}
+Wenn kein Kaufpreis sichtbar ist, setze avgPrice auf 0. Ticker immer in Großbuchstaben.`
+            }]
+          }]
+        })
+      });
+      const data = await resp.json();
+      const text = data.content?.[0]?.text?.replace(/\`\`\`json|\`\`\`/g, "").trim();
+      const parsed = JSON.parse(text);
+      setPreview(parsed.positions || []);
+    } catch (e) {
+      setError("Fehler beim Lesen: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function handleCSV(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError("");
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const lines = ev.target.result.split("\n").filter(l => l.trim());
+        const header = lines[0].toLowerCase();
+        const positions = [];
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(",").map(c => c.trim().replace(/"/g, ""));
+          if (cols.length < 2) continue;
+          // Flexibles Parsen: versuche verschiedene Spaltenreihenfolgen
+          let ticker = "",
+            name = "",
+            shares = 0,
+            avgPrice = 0,
+            currency = "USD";
+          if (header.includes("ticker")) {
+            const hi = h => header.split(",").findIndex(x => x.includes(h));
+            ticker = cols[hi("ticker")]?.toUpperCase() || "";
+            name = cols[hi("name")] || "";
+            shares = parseFloat(cols[hi("anteil") || hi("shares") || hi("qty") || hi("menge")] || 0);
+            avgPrice = parseFloat(cols[hi("kauf") || hi("avg") || hi("preis") || hi("price")] || 0);
+            currency = cols[hi("währ") || hi("curr")] || "USD";
+          } else {
+            // Fallback: erste 5 Spalten als Ticker,Name,Shares,AvgPrice,Currency
+            [ticker, name, shares, avgPrice, currency] = [cols[0]?.toUpperCase(), cols[1], parseFloat(cols[2] || 0), parseFloat(cols[3] || 0), cols[4] || "USD"];
+          }
+          if (ticker && shares > 0) positions.push({
+            ticker,
+            name,
+            shares,
+            avgPrice,
+            currency
+          });
+        }
+        if (positions.length === 0) throw new Error("Keine Positionen gefunden – prüfe das Format");
+        setPreview(positions);
+      } catch (e) {
+        setError(e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+  function startEdit(i) {
+    setEditing(i);
+    setEditForm(i === -1 ? {
+      ticker: "",
+      name: "",
+      shares: "",
+      avgPrice: "",
+      currency: "USD"
+    } : {
+      ...positions[i],
+      shares: String(positions[i].shares),
+      avgPrice: String(positions[i].avgPrice)
+    });
+  }
+  function saveEdit() {
+    const pos = {
+      ...editForm,
+      shares: parseFloat(editForm.shares) || 0,
+      avgPrice: parseFloat(editForm.avgPrice) || 0,
+      ticker: editForm.ticker.toUpperCase()
+    };
+    if (!pos.ticker || !pos.shares) {
+      setError("Ticker und Anteile sind Pflichtfelder");
+      return;
+    }
+    let updated = [...positions];
+    if (editing === -1) updated.push(pos);else updated[editing] = pos;
+    onSave(updated);
+    setEditing(null);
+    setError("");
+  }
+  function deletePos(i) {
+    onSave(positions.filter((_, j) => j !== i));
+  }
+  const totalPL = positions.reduce((sum, p) => {
+    const pl = calcPL(p, quotes);
+    return pl ? {
+      abs: sum.abs + pl.plAbs,
+      cost: sum.cost + pl.cost
+    } : sum;
+  }, {
+    abs: 0,
+    cost: 0
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    className: "modal-bg",
+    onClick: onClose
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-box",
+    onClick: e => e.stopPropagation(),
+    style: {
+      maxHeight: "92vh"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-header"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "modal-title"
+  }, "Portfolio Manager"), /*#__PURE__*/React.createElement("button", {
+    className: "modal-close",
+    onClick: onClose
+  }, "✕")), /*#__PURE__*/React.createElement("div", {
+    className: "modal-body"
+  }, editing === null && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-import-row"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn",
+    onClick: () => setMode("screenshot")
+  }, "📷 Screenshot"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn",
+    onClick: () => setMode("csv")
+  }, "📄 CSV Import"), /*#__PURE__*/React.createElement("a", {
+    className: "pm-btn",
+    href: CSV_TEMPLATE,
+    download: "portfolio_vorlage.csv"
+  }, "⬇ Vorlage"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn accent",
+    onClick: () => startEdit(-1)
+  }, "+ Manuell")), mode === "screenshot" && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-upload-area"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, "Mache einen Screenshot deines Revolut- oder Trade Republic-Portfolios (komplette Übersicht) und lade ihn hier hoch."), busy ? /*#__PURE__*/React.createElement("div", {
+    className: "modal-loading"
+  }, "Claude liest dein Portfolio… ⏳") : /*#__PURE__*/React.createElement("label", {
+    className: "pm-file-label"
+  }, "📷 Screenshot auswählen", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    onChange: handleScreenshot,
+    style: {
+      display: "none"
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setMode(null)
+  }, "← Zurück")), mode === "csv" && !preview && /*#__PURE__*/React.createElement("div", {
+    className: "pm-upload-area"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, "Lade eine CSV-Datei hoch. Spalten: Ticker, Name, Anteile, Kaufpreis, Währung. Oder nutze die Vorlage oben."), /*#__PURE__*/React.createElement("label", {
+    className: "pm-file-label"
+  }, "📄 CSV auswählen", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: ".csv,text/csv",
+    onChange: handleCSV,
+    style: {
+      display: "none"
+    }
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setMode(null)
+  }, "← Zurück")), preview && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint",
+    style: {
+      color: "#5FAE7C"
+    }
+  }, "✓ ", preview.length, " Positionen erkannt – prüfe und bestätige:"), /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-list"
+  }, preview.map((p, i) => /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-row",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "tpill sm"
+  }, p.ticker), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pname"
+  }, p.name || "–"), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pshares"
+  }, p.shares, " Stk."), /*#__PURE__*/React.createElement("span", {
+    className: "pm-pavg"
+  }, p.avgPrice > 0 ? "$" + p.avgPrice : "–")))), /*#__PURE__*/React.createElement("div", {
+    className: "pm-preview-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "as",
+    style: {
+      flex: 1
+    },
+    onClick: () => {
+      onSave(preview);
+      setPreview(null);
+      setMode(null);
+    }
+  }, "✓ Speichern"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => setPreview(null)
+  }, "✕ Verwerfen"))), editing !== null && /*#__PURE__*/React.createElement("div", {
+    className: "pm-edit-form"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "pm-hint"
+  }, editing === -1 ? "Neue Position hinzufügen" : "Position bearbeiten"), ["ticker", "name", "shares", "avgPrice"].map(f => /*#__PURE__*/React.createElement("div", {
+    key: f,
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "lb"
+  }, f === "ticker" ? "Ticker (z.B. NVDA)" : f === "name" ? "Name" : f === "shares" ? "Anzahl Anteile" : "Durchschn. Kaufpreis ($)"), /*#__PURE__*/React.createElement("input", {
+    className: "ai",
+    value: editForm[f],
+    onChange: e => setEditForm(x => ({
+      ...x,
+      [f]: e.target.value
+    })),
+    placeholder: f === "ticker" ? "NVDA" : f === "name" ? "NVIDIA Corporation" : f === "shares" ? "10" : "150.00"
+  }))), error && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, error), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginTop: 12
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "as",
+    style: {
+      flex: 1
+    },
+    onClick: saveEdit
+  }, "Speichern"), /*#__PURE__*/React.createElement("button", {
+    className: "pm-back",
+    onClick: () => {
+      setEditing(null);
+      setError("");
+    }
+  }, "Abbrechen"))), error && !editing && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, error), editing === null && !preview && positions.length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, totalPL.cost > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "pm-total-row"
+  }, /*#__PURE__*/React.createElement("span", null, "Gesamt P&L"), /*#__PURE__*/React.createElement("span", {
+    className: totalPL.abs >= 0 ? "ch pos" : "ch neg"
+  }, totalPL.abs >= 0 ? "+" : "", totalPL.abs.toFixed(0), "$ (", totalPL.cost > 0 ? (totalPL.abs / totalPL.cost * 100).toFixed(1) : "–", "%)")), /*#__PURE__*/React.createElement("div", {
+    className: "pm-positions"
+  }, positions.map((p, i) => {
+    const pl = calcPL(p, quotes);
+    return /*#__PURE__*/React.createElement("div", {
+      className: "pm-pos-row",
+      key: i
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "tpill sm"
+    }, p.ticker), /*#__PURE__*/React.createElement("span", {
+      className: "pm-pshares"
+    }, p.shares, " Stk."), pl ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "pm-pcurrent"
+    }, "$", pl.current.toFixed(0)), /*#__PURE__*/React.createElement("span", {
+      className: pl.plPct >= 0 ? "ch pos" : "ch neg",
+      style: {
+        fontSize: 11
+      }
+    }, pl.plPct >= 0 ? "+" : "", pl.plPct.toFixed(1), "%")) : /*#__PURE__*/React.createElement("span", {
+      className: "pm-pcurrent",
+      style: {
+        color: "#8C8D90"
+      }
+    }, "–"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        gap: 4,
+        marginLeft: "auto"
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "pm-icon-btn",
+      onClick: () => startEdit(i)
+    }, "✏"), /*#__PURE__*/React.createElement("button", {
+      className: "pm-icon-btn del",
+      onClick: () => deletePos(i)
+    }, "✕")));
+  }))), editing === null && !preview && positions.length === 0 && /*#__PURE__*/React.createElement("p", {
+    className: "wmuted"
+  }, "Noch keine Positionen. Importiere dein Portfolio oder füge Positionen manuell hinzu."))));
+}
+
+/* ---- Ticker-Band ---- */
+function Ticker({
+  quotes
+}) {
+  const items = QUOTE_TICKERS.map(p => ({
+    t: p.ticker,
+    ch: quotes[p.ticker]?.change ?? null
+  }));
+  const all = [...items, ...items];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "tkr"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ttr"
+  }, all.map((t, i) => /*#__PURE__*/React.createElement("span", {
+    className: "ti",
+    key: i
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ts"
+  }, t.t), t.ch !== null ? /*#__PURE__*/React.createElement(Change, {
+    v: t.ch,
+    sm: true
+  }) : /*#__PURE__*/React.createElement("span", {
+    className: "ch neu"
+  }, "–")))));
+}
+
+/* ---- Auth ---- */
+function Shell({
+  ch
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "sh"
+  }, /*#__PURE__*/React.createElement(Ticker, {
+    quotes: {}
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "sc"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "cd"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wm"
+  }, /*#__PURE__*/React.createElement(Lock, {
+    s: 18
+  }), /*#__PURE__*/React.createElement("span", null, "TRADE SNIFFER")), ch)));
+}
+function Setup({
+  onDone
+}) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function go(e) {
+    e.preventDefault();
+    if (pw.length < 4) {
+      setErr("Mindestens 4 Zeichen.");
+      return;
+    }
+    if (pw !== pw2) {
+      setErr("Passwörter stimmen nicht überein.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onDone(pw);
+    } catch (ex) {
+      setErr("Fehler: " + ex.message);
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/React.createElement("form", {
+    onSubmit: go,
+    className: "af"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "al"
+  }, "Lege dein Passwort fest."), /*#__PURE__*/React.createElement("label", {
+    className: "lb"
+  }, "Passwort"), /*#__PURE__*/React.createElement("div", {
+    className: "iw"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: show ? "text" : "password",
+    value: pw,
+    onChange: e => {
+      setPw(e.target.value);
+      setErr("");
+    },
+    className: "ai",
+    autoFocus: true
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ie",
+    onClick: () => setShow(s => !s)
+  }, show ? /*#__PURE__*/React.createElement(EyeOff, {
+    s: 16
+  }) : /*#__PURE__*/React.createElement(Eye, {
+    s: 16
+  }))), /*#__PURE__*/React.createElement("label", {
+    className: "lb"
+  }, "Bestätigen"), /*#__PURE__*/React.createElement("input", {
+    type: show ? "text" : "password",
+    value: pw2,
+    onChange: e => {
+      setPw2(e.target.value);
+      setErr("");
+    },
+    className: "ai"
+  }), err && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, err), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    className: "as",
+    disabled: busy
+  }, busy ? "Speichern …" : "Passwort festlegen"));
+}
+function Login({
+  onSubmit,
+  onReset
+}) {
+  const [pw, setPw] = useState("");
+  const [show, setShow] = useState(false);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [conf, setConf] = useState(false);
+  async function go(e) {
+    e.preventDefault();
+    setBusy(true);
+    setErr("");
+    try {
+      await onSubmit(pw);
+    } catch {
+      setErr("Falsches Passwort.");
+      setBusy(false);
+    }
+  }
+  return /*#__PURE__*/React.createElement("form", {
+    onSubmit: go,
+    className: "af"
+  }, /*#__PURE__*/React.createElement("p", {
+    className: "al"
+  }, "Willkommen zurück."), /*#__PURE__*/React.createElement("label", {
+    className: "lb"
+  }, "Passwort"), /*#__PURE__*/React.createElement("div", {
+    className: "iw"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: show ? "text" : "password",
+    value: pw,
+    onChange: e => {
+      setPw(e.target.value);
+      setErr("");
+    },
+    className: "ai",
+    autoFocus: true
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "ie",
+    onClick: () => setShow(s => !s)
+  }, show ? /*#__PURE__*/React.createElement(EyeOff, {
+    s: 16
+  }) : /*#__PURE__*/React.createElement(Eye, {
+    s: 16
+  }))), err && /*#__PURE__*/React.createElement("p", {
+    className: "ae"
+  }, err), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    className: "as",
+    disabled: busy
+  }, busy ? "Prüfen …" : "Anmelden"), /*#__PURE__*/React.createElement("div", {
+    className: "rr"
+  }, !conf ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lk",
+    onClick: () => setConf(true)
+  }, "Passwort vergessen?") : /*#__PURE__*/React.createElement("div", {
+    className: "rc"
+  }, /*#__PURE__*/React.createElement("span", null, "Sicher? Alle Daten werden gelöscht."), /*#__PURE__*/React.createElement("div", {
+    className: "ra"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lk",
+    onClick: onReset
+  }, "Ja"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "lk mu",
+    onClick: () => setConf(false)
+  }, "Abbrechen")))));
+}
+
+/* ---- Dashboard ---- */
+function Dashboard({
+  onLogout,
+  ok,
+  onFail
+}) {
+  const [widgets, setWidgets] = useState(INIT_WIDGETS);
+  const [loaded, setLoaded] = useState(false);
+  const [edit, setEdit] = useState(false);
+  const [drag, setDrag] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [szOpen, setSzOpen] = useState(null);
+
+  // Live-Daten
+  const [quotes, setQuotes] = useState({});
+  const [rawNews, setRawNews] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
+  const [quotesLoading, setQuotesLoading] = useState(true);
+  const [expandedType, setExpandedType] = useState(null);
+  const [myPositions, setMyPositions] = useState([]);
+  const [showPortfolioMgr, setShowPortfolioMgr] = useState(false);
+  const [aiLoading, setAiLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  // Portfolio-Positionen laden
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await dbGet("myportfolio");
+        if (v) setMyPositions(JSON.parse(v));
+      } catch {}
+    })();
+  }, []);
+  async function saveMyPositions(positions) {
+    setMyPositions(positions);
+    try {
+      await dbSet("myportfolio", JSON.stringify(positions));
+    } catch {}
+  }
+
+  // Layout laden
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const v = await dbGet("layout");
+        if (live && v) {
+          // Alte Typ-Namen auf neue mappen (Backward Compatibility)
+          const COMPAT = {
+            pf: "portfolio",
+            wl: "watchlist",
+            mv: "movers",
+            al: "alerts"
+          };
+          const parsed = JSON.parse(v).map(w => ({
+            ...w,
+            type: COMPAT[w.type] || w.type
+          }));
+          // Neue Widgets automatisch hinzufügen falls noch nicht im gespeicherten Layout
+          const savedTypes = new Set(parsed.map(w => w.type));
+          const missing = INIT_WIDGETS.filter(w => !savedTypes.has(w.type));
+          setWidgets([...parsed, ...missing]);
+        }
+      } catch (e) {
+        console.warn("Layout laden fehlgeschlagen:", e);
+      } finally {
+        if (live) setLoaded(true);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Layout speichern
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      try {
+        await dbSet("layout", JSON.stringify(widgets));
+      } catch {
+        onFail();
+      }
+    })();
+  }, [widgets, loaded]);
+
+  // Live-Daten laden
+  useEffect(() => {
+    loadData();
+  }, []);
+  async function loadData() {
+    setDataLoading(true);
+    setQuotesLoading(true);
+    setAiLoading(true);
+
+    // Phase 1: Kurse sofort laden und anzeigen (schnell ~1-2s)
+    try {
+      const q = await fetchAllQuotes();
+      setQuotes(q);
+      setLastUpdate(new Date().toLocaleTimeString("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit"
+      }));
+    } catch (e) {
+      console.warn("Kurse fehlgeschlagen:", e);
+    }
+    setQuotesLoading(false);
+
+    // Phase 2: News laden
+    let news = [];
+    try {
+      news = await fetchAllNews();
+      setRawNews(news);
+    } catch (e) {
+      console.warn("News fehlgeschlagen:", e);
+    }
+
+    // Phase 3: KI-Analyse im Hintergrund (langsam ~10-20s)
+    try {
+      const q = await fetchAllQuotes(); // frische Kurse für KI
+      const ai = await analyzeWithClaude(news, q);
+      setAnalysis(ai);
+    } catch (e) {
+      console.warn("KI-Analyse fehlgeschlagen:", e);
+    }
+    setAiLoading(false);
+    setDataLoading(false);
+    setLastUpdate(new Date().toLocaleTimeString("de-DE", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }));
+  }
+  function drop(tid) {
+    if (!drag || drag === tid) {
+      setDrag(null);
+      setHover(null);
+      return;
+    }
+    setWidgets(p => {
+      const a = [...p],
+        fi = a.findIndex(w => w.id === drag),
+        ti = a.findIndex(w => w.id === tid);
+      const [m] = a.splice(fi, 1);
+      a.splice(ti, 0, m);
+      return a;
+    });
+    setDrag(null);
+    setHover(null);
+  }
+  function resize(id, sz) {
+    setWidgets(p => p.map(w => w.id === id ? {
+      ...w,
+      size: sz
+    } : w));
+    setSzOpen(null);
+  }
+  const widgetProps = {
+    quotes,
+    rawNews,
+    analysis,
+    loading: aiLoading,
+    quotesLoading,
+    myPositions
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "dsh"
+  }, /*#__PURE__*/React.createElement(Ticker, {
+    quotes: quotes
+  }), /*#__PURE__*/React.createElement("header", {
+    className: "dh"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "wm"
+  }, /*#__PURE__*/React.createElement(Lock, {
+    s: 16
+  }), /*#__PURE__*/React.createElement("span", null, "TRADE SNIFFER")), /*#__PURE__*/React.createElement("div", {
+    className: "da"
+  }, lastUpdate && /*#__PURE__*/React.createElement("span", {
+    className: "update-time"
+  }, "Stand ", lastUpdate), /*#__PURE__*/React.createElement("button", {
+    className: "pill-icon",
+    onClick: loadData,
+    title: "Daten aktualisieren"
+  }, /*#__PURE__*/React.createElement(Ref, {
+    s: 14
+  })), /*#__PURE__*/React.createElement("button", {
+    className: `pl ${edit ? "ac" : ""}`,
+    onClick: () => {
+      setEdit(e => !e);
+      setSzOpen(null);
+    }
+  }, edit ? /*#__PURE__*/React.createElement(Chk, {
+    s: 14
+  }) : /*#__PURE__*/React.createElement(Grid_, {
+    s: 14
+  }), edit ? "Fertig" : "Anordnen"), /*#__PURE__*/React.createElement("button", {
+    className: "pl gh",
+    onClick: onLogout
+  }, /*#__PURE__*/React.createElement(Out_, {
+    s: 14
+  }), "Abmelden"))), !ok && /*#__PURE__*/React.createElement("div", {
+    className: "pb"
+  }, "Datenbankverbindung unterbrochen."), szOpen && /*#__PURE__*/React.createElement("div", {
+    className: "bk",
+    onClick: () => setSzOpen(null)
+  }), showPortfolioMgr && /*#__PURE__*/React.createElement(PortfolioManager, {
+    positions: myPositions,
+    quotes: quotes,
+    onSave: saveMyPositions,
+    onClose: () => setShowPortfolioMgr(false)
+  }), expandedType && /*#__PURE__*/React.createElement(WidgetModal, {
+    widgetType: expandedType,
+    onClose: () => setExpandedType(null),
+    analysis: analysis,
+    rawNews: rawNews,
+    quotes: quotes,
+    aiLoading: aiLoading
+  }), /*#__PURE__*/React.createElement("main", {
+    className: "gr"
+  }, widgets.map((w, i) => {
+    const R = WIDGET_MAP[w.type];
+    if (!R) return null; // Unbekannter Widget-Typ – überspringen
+    return /*#__PURE__*/React.createElement("div", {
+      key: w.id,
+      className: ["kc", `sz-${w.size}`, edit ? "ed" : "", drag === w.id ? "dr" : "", hover === w.id && drag && drag !== w.id ? "hv" : ""].join(" "),
+      style: edit ? {
+        animationDelay: i % 2 === 0 ? "0s" : "0.13s"
+      } : undefined,
+      onClick: () => !edit && setExpandedType(w.type),
+      style: {
+        ...(edit ? {
+          animationDelay: i % 2 === 0 ? "0s" : "0.13s"
+        } : undefined),
+        cursor: edit ? "grab" : "pointer"
+      },
+      draggable: edit,
+      onDragStart: () => setDrag(w.id),
+      onDragOver: e => {
+        e.preventDefault();
+        setHover(w.id);
+      },
+      onDragLeave: () => setHover(h => h === w.id ? null : h),
+      onDrop: () => drop(w.id),
+      onDragEnd: () => {
+        setDrag(null);
+        setHover(null);
+      }
+    }, edit && /*#__PURE__*/React.createElement("span", {
+      className: "dp"
+    }, /*#__PURE__*/React.createElement(Grip, {
+      s: 14
+    })), /*#__PURE__*/React.createElement(R, widgetProps), edit && /*#__PURE__*/React.createElement("div", {
+      className: "rs"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "rb",
+      onClick: () => setSzOpen(id => id === w.id ? null : w.id)
+    }, "Größe"), szOpen === w.id && /*#__PURE__*/React.createElement("div", {
+      className: "sm",
+      onClick: e => e.stopPropagation()
+    }, [["small", "Klein"], ["wide", "Breit"], ["large", "Groß"]].map(([k, l]) => /*#__PURE__*/React.createElement("button", {
+      key: k,
+      className: `so ${w.size === k ? "sl" : ""}`,
+      onClick: () => resize(w.id, k)
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "spf"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: `sps sp-${k}`
+    })), /*#__PURE__*/React.createElement("span", null, l))))));
+  })), /*#__PURE__*/React.createElement("p", {
+    className: "pf"
+  }, "Live-Daten via Finnhub · KI-Analyse via Claude · Keine Anlageberatung"));
+}
+
+/* ---- App ---- */
+function App() {
+  const [screen, setScreen] = useState("loading");
+  const [hash, setHash] = useState(null);
+  const [ok, setOk] = useState(true);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const h = await dbGet("hash");
+        if (!live) return;
+        if (h) {
+          setHash(h);
+          setScreen("login");
+        } else {
+          setScreen("setup");
+        }
+      } catch (e) {
+        if (live) {
+          setOk(false);
+          setScreen("setup");
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+  async function setup(pw) {
+    const h = await hashPw(pw);
+    await dbSet("hash", h);
+    setHash(h);
+    setScreen("dashboard");
+  }
+  async function login(pw) {
+    const h = await hashPw(pw);
+    if (h !== hash) throw new Error("falsch");
+    setScreen("dashboard");
+  }
+  async function reset() {
+    await dbDel("hash");
+    await dbDel("layout");
+    setHash(null);
+    setScreen("setup");
+  }
+  const CSS = `
+    *,*::before,*::after{box-sizing:border-box;}
+    .wm{display:flex;align-items:center;gap:8px;font-family:'Fraunces',serif;font-weight:600;letter-spacing:.06em;color:#3FC6C2;font-size:15px;white-space:nowrap;}
+    .tkr{overflow:hidden;border-bottom:1px solid #323436;background:#222426;}
+    .ttr{display:flex;width:max-content;gap:28px;padding:7px 16px;animation:mq 30s linear infinite;}
+    .ti{display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8C8D90;white-space:nowrap;}
+    .ts{color:#ECEAE5;font-weight:600;}
+    @keyframes mq{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+    .ch{display:inline-flex;align-items:center;gap:2px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
+    .ch.pos{color:#5FAE7C;}.ch.neg{color:#C9695A;}.ch.neu{color:#8C8D90;}
+    .sh{min-height:100vh;display:flex;flex-direction:column;background:radial-gradient(1200px 600px at 15% -10%,rgba(63,198,194,.08),transparent),repeating-linear-gradient(115deg,rgba(255,255,255,.012) 0px,rgba(255,255,255,.012) 1px,transparent 1px,transparent 7px),#08090A;}
+    .sc{flex:1;display:flex;align-items:center;justify-content:center;padding:32px 20px;}
+    .cd{width:100%;max-width:360px;background:#1A1B1D;border:1px solid #323436;border-radius:16px;padding:32px 28px;display:flex;flex-direction:column;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.4);}
+    .af{display:flex;flex-direction:column;gap:6px;}
+    .al{color:#8C8D90;font-size:14px;margin:0 0 10px;}
+    .lb{font-size:12px;color:#8C8D90;margin-top:10px;margin-bottom:6px;}
+    .iw{position:relative;display:flex;align-items:center;}
+    .ai{width:100%;background:#222426;border:1px solid #323436;color:#ECEAE5;border-radius:10px;padding:11px 38px 11px 13px;font-size:14px;font-family:'Inter',sans-serif;}
+    .ie{position:absolute;right:8px;background:none;border:none;color:#8C8D90;display:flex;padding:4px;cursor:pointer;}
+    .ae{color:#C9695A;font-size:12px;margin:4px 0 0;}
+    .as{margin-top:18px;background:#3FC6C2;color:#082422;border:none;font-weight:600;font-size:14px;padding:12px;border-radius:10px;cursor:pointer;transition:filter .15s;font-family:'Inter',sans-serif;}
+    .as:hover:not(:disabled){filter:brightness(1.08);}.as:disabled{opacity:.6;cursor:default;}
+    .rr{margin-top:4px;}.lk{background:none;border:none;color:#3FC6C2;font-size:12px;padding:2px 0;cursor:pointer;font-family:'Inter',sans-serif;}
+    .lk.mu{color:#8C8D90;}.rc{display:flex;flex-direction:column;gap:8px;}
+    .rc span{font-size:12px;color:#8C8D90;line-height:1.4;}.ra{display:flex;gap:14px;}
+    .dsh{min-height:100vh;background:radial-gradient(1200px 600px at 15% -10%,rgba(63,198,194,.08),transparent),repeating-linear-gradient(115deg,rgba(255,255,255,.012) 0px,rgba(255,255,255,.012) 1px,transparent 1px,transparent 7px),#08090A;}
+    .dh{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid #323436;gap:10px;}
+    .da{display:flex;align-items:center;gap:8px;}
+    .update-time{font-size:11px;color:#8C8D90;font-family:'IBM Plex Mono',monospace;}
+    .pill-icon{background:#1A1B1D;border:1px solid #323436;color:#8C8D90;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:border-color .15s;}
+    .pill-icon:hover{border-color:#3FC6C2;color:#3FC6C2;}
+    .pl{display:flex;align-items:center;gap:6px;background:#1A1B1D;border:1px solid #323436;color:#ECEAE5;font-size:13px;padding:8px 14px;border-radius:999px;transition:border-color .15s;font-family:'Inter',sans-serif;cursor:pointer;}
+    .pl:hover{border-color:#3FC6C2;}.pl.ac{background:#3FC6C2;color:#082422;border-color:#3FC6C2;}.pl.gh{color:#8C8D90;}
+    .pb{margin:14px 22px 0;padding:10px 14px;border-radius:10px;background:#222426;border:1px solid #3FC6C2;color:#8C8D90;font-size:12px;}
+    .pf{text-align:center;color:#8C8D90;font-size:11px;padding:16px 0 24px;}
+    .gr{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:168px;grid-auto-flow:dense;gap:16px;padding:22px;}
+    .sz-small{grid-column:span 1;grid-row:span 1;}.sz-wide{grid-column:span 2;grid-row:span 1;}.sz-large{grid-column:span 2;grid-row:span 2;}
+    @media(max-width:720px){.gr{grid-template-columns:repeat(2,1fr);}.sz-wide,.sz-large{grid-column:span 2;}}
+    .kc{position:relative;background:#1A1B1D;border:1px solid #323436;border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;overflow:hidden;transition:transform .15s,border-color .15s,box-shadow .15s;}
+    .kc:not(.ed):hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.3);}
+    .kc.ed{animation:jg .32s infinite ease-in-out alternate;cursor:grab;}
+    .kc.dr{opacity:.4;}.kc.hv{border-color:#3FC6C2;box-shadow:0 0 0 1px #3FC6C2 inset;}
+    @keyframes jg{from{transform:rotate(-.5deg)}to{transform:rotate(.5deg)}}
+    .dp{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:50%;background:#3FC6C2;color:#082422;display:flex;align-items:center;justify-content:center;}
+    .wh{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+    .wi{width:28px;height:28px;border-radius:8px;background:#222426;color:#3FC6C2;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+    .wt{font-weight:600;font-size:13px;}.ws{font-size:11px;color:#8C8D90;}
+    .wf{margin-top:auto;padding-top:8px;font-size:10px;color:#8C8D90;}
+    .wmuted{font-size:12px;color:#8C8D90;margin:0;}
+    .wloader{width:14px;height:14px;border:2px solid #323436;border-top-color:#3FC6C2;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0;}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .tpill{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;background:#222426;border:1px solid #323436;color:#ECEAE5;padding:2px 7px;border-radius:6px;white-space:nowrap;}
+    .tpill.sm{font-size:10px;padding:1px 5px;}
+    .skeleton-list{display:flex;flex-direction:column;gap:8px;flex:1;}
+    .skeleton{height:14px;background:linear-gradient(90deg,#222426 25%,#2a2c2e 50%,#222426 75%);background-size:200% 100%;border-radius:6px;animation:shimmer 1.5s infinite;}
+    .skeleton.sm{height:10px;width:60%;}
+    @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+    .briefing{font-size:12.5px;color:#ECEAE5;line-height:1.5;margin:0 0 10px;}
+    .watchout{font-size:11.5px;color:#C9A04D;background:rgba(201,160,77,.1);border:1px solid rgba(201,160,77,.25);border-radius:8px;padding:7px 10px;margin-bottom:10px;line-height:1.4;}
+    .opp-list{display:flex;flex-direction:column;gap:8px;overflow:auto;}
+    .opp{background:#222426;border:1px solid #323436;border-radius:10px;padding:9px 12px;}
+    .opp-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;}
+    .conf{font-size:11px;color:#3FC6C2;font-weight:600;}
+    .opp-reason{font-size:11.5px;color:#8C8D90;line-height:1.4;margin:0;}
+    .nl{display:flex;flex-direction:column;gap:8px;overflow:auto;}
+    .nr{display:flex;align-items:center;gap:8px;font-size:12px;}
+    .nx{color:#8C8D90;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+    .dt{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+    .dt-pos{background:#5FAE7C;}.dt-neg{background:#C9695A;}.dt-neu{background:#8C8D90;}
+    .pfr{display:flex;align-items:center;justify-content:space-between;flex:1;gap:14px;}
+    .pfv{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:600;margin-bottom:2px;}
+    .pflab{font-size:11px;color:#8C8D90;margin-right:4px;}
+    .spk{width:48%;height:60px;}
+    .wll{display:flex;flex-direction:column;gap:8px;overflow:auto;}
+    .wr{display:flex;align-items:center;gap:8px;font-size:12px;}
+    .wp{font-family:'IBM Plex Mono',monospace;color:#8C8D90;flex:1;text-align:right;}
+    .mr{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;}
+    .ip{color:#5FAE7C;}.in{color:#C9695A;}
+    .at{font-size:12px;color:#8C8D90;margin:0;}
+    .rs{position:absolute;bottom:8px;right:8px;}
+    .rb{background:#222426;border:1px solid #323436;color:#8C8D90;font-size:10px;padding:4px 9px;border-radius:999px;cursor:pointer;font-family:'Inter',sans-serif;}
+    .rb:hover{border-color:#3FC6C2;color:#ECEAE5;}
+    .sm{position:absolute;bottom:30px;right:0;background:#1A1B1D;border:1px solid #323436;border-radius:12px;padding:10px;display:flex;gap:8px;box-shadow:0 12px 30px rgba(0,0,0,.4);z-index:50;}
+    .so{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:1px solid transparent;border-radius:8px;padding:6px 8px;color:#8C8D90;font-size:10px;cursor:pointer;font-family:'Inter',sans-serif;}
+    .so.sl{border-color:#3FC6C2;color:#ECEAE5;}
+    .spf{width:34px;height:30px;display:flex;align-items:center;justify-content:center;}
+    .sps{background:#3FC6C2;border-radius:3px;}
+    .sp-small{width:14px;height:14px;}.sp-wide{width:26px;height:13px;}.sp-large{width:24px;height:24px;}
+    .bk{position:fixed;inset:0;z-index:40;}
+    *:focus-visible{outline:2px solid #3FC6C2;outline-offset:2px;}
+    /* Modal */
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:200;display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);}
+    @media(min-width:600px){.modal-bg{align-items:center;}}
+    .modal-box{background:#1A1B1D;border:1px solid #323436;border-radius:20px 20px 0 0;width:100%;max-width:720px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;}
+    @media(min-width:600px){.modal-box{border-radius:16px;max-height:85vh;}}
+    .modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #323436;flex-shrink:0;}
+    .modal-title{font-weight:600;font-size:15px;color:#ECEAE5;}
+    .modal-close{background:#222426;border:1px solid #323436;color:#8C8D90;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;}
+    .modal-body{overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;flex:1;}
+    .modal-ticker-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+    .ticker-btn{background:#222426;border:1px solid #323436;color:#8C8D90;padding:5px 10px;border-radius:7px;font-size:12px;font-family:'IBM Plex Mono',monospace;cursor:pointer;transition:border-color .15s;}
+    .ticker-btn.sel{border-color:#3FC6C2;color:#3FC6C2;}
+    .ticker-btn:hover{border-color:#3FC6C2;}
+    .tp{color:#5FAE7C;font-size:10px;}.tn{color:#C9695A;font-size:10px;}
+    .modal-quote-bar{display:flex;align-items:center;gap:14px;padding:10px 14px;background:#222426;border-radius:10px;margin-top:10px;}
+    .mqb-price{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;}
+    .mqb-change{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600;}
+    .mqb-prev{font-size:12px;color:#8C8D90;}
+    .modal-briefing{font-size:14px;line-height:1.6;color:#ECEAE5;padding:12px;background:#222426;border-radius:10px;}
+    .modal-loading{color:#8C8D90;font-size:14px;padding:20px;text-align:center;}
+    .modal-news-section{display:flex;flex-direction:column;gap:12px;}
+    .modal-news-row{display:flex;gap:10px;align-items:flex-start;}
+    .modal-news-headline{font-size:13.5px;line-height:1.4;color:#ECEAE5;margin-bottom:4px;}
+    .modal-news-reason{font-size:12px;color:#8C8D90;line-height:1.4;}
+    .modal-news-link{font-size:11px;color:#3FC6C2;text-decoration:none;display:inline-block;margin-top:4px;}
+    /* Hover-Effekt für klickbare Widgets */
+    .kc:not(.ed){cursor:pointer;}
+    .kc:not(.ed):active{transform:scale(.98);}
+    @media(prefers-reduced-motion:reduce){.ttr{animation:none;}.kc.ed{animation:none;}.wloader{animation:none;}.skeleton{animation:none;}}
+    /* Portfolio Manager */
+    .pm-import-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;}
+    .pm-btn{background:#222426;border:1px solid #323436;color:#ECEAE5;padding:8px 14px;border-radius:9px;font-size:13px;cursor:pointer;font-family:'Inter',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:6px;}
+    .pm-btn:hover{border-color:#3FC6C2;}.pm-btn.accent{background:#3FC6C2;color:#082422;border-color:#3FC6C2;font-weight:600;}
+    .pm-hint{font-size:13px;color:#8C8D90;line-height:1.5;margin:0 0 12px;}
+    .pm-upload-area{display:flex;flex-direction:column;gap:12px;}
+    .pm-file-label{background:#222426;border:2px dashed #323436;color:#3FC6C2;padding:20px;border-radius:12px;text-align:center;font-size:14px;cursor:pointer;transition:border-color .15s;}
+    .pm-file-label:hover{border-color:#3FC6C2;}
+    .pm-back{background:none;border:none;color:#8C8D90;font-size:13px;cursor:pointer;padding:4px 0;font-family:'Inter',sans-serif;}
+    .pm-preview-list{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
+    .pm-preview-row{display:flex;align-items:center;gap:10px;background:#222426;border-radius:8px;padding:8px 12px;}
+    .pm-pname{font-size:12px;color:#8C8D90;flex:1;}
+    .pm-pshares{font-size:12px;font-family:'IBM Plex Mono',monospace;color:#ECEAE5;}
+    .pm-pavg{font-size:11px;color:#8C8D90;font-family:'IBM Plex Mono',monospace;}
+    .pm-preview-actions{display:flex;gap:10px;align-items:center;}
+    .pm-edit-form{display:flex;flex-direction:column;gap:4px;}
+    .pm-total-row{display:flex;align-items:center;justify-content:space-between;background:#222426;border-radius:10px;padding:10px 14px;margin-bottom:10px;font-size:13px;font-weight:600;}
+    .pm-positions{display:flex;flex-direction:column;gap:6px;}
+    .pm-pos-row{display:flex;align-items:center;gap:10px;background:#222426;border-radius:8px;padding:8px 12px;}
+    .pm-pcurrent{font-size:12px;font-family:'IBM Plex Mono',monospace;color:#ECEAE5;margin-left:auto;}
+    .pm-icon-btn{background:#1A1B1D;border:1px solid #323436;color:#8C8D90;width:26px;height:26px;border-radius:6px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;}
+    .pm-icon-btn.del:hover{border-color:#C9695A;color:#C9695A;}
+    .pm-icon-btn:hover{border-color:#3FC6C2;color:#3FC6C2;}
+    /* Kaufempfehlungen */
+    .rec-card{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;margin-bottom:2px;}
+    .rec-top{display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;}
+    .rec-action{font-size:11px;font-weight:700;color:#5FAE7C;background:rgba(95,174,124,.15);padding:2px 7px;border-radius:5px;}
+    .rec-meta{display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:3px;flex-wrap:wrap;}
+    .rec-entry{color:#8C8D90;font-family:'IBM Plex Mono',monospace;}
+    .rec-sep{color:#323436;}
+    .rec-target{color:#5FAE7C;font-family:'IBM Plex Mono',monospace;font-weight:600;}
+    .rec-timeframe{font-size:10px;color:#8C8D90;margin:2px 0 5px;}
+    .rec-risk{font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600;}
+    .risk-niedrig{background:rgba(95,174,124,.2);color:#5FAE7C;}
+    .risk-mittel{background:rgba(201,160,77,.2);color:#C9A04D;}
+    .risk-hoch{background:rgba(201,105,90,.2);color:#C9695A;}
+    /* Day Trading */
+    .dt-card{background:#222426;border:1px solid #323436;border-radius:10px;padding:10px 12px;margin-bottom:2px;}
+    .dt-setup{font-size:11px;color:#3FC6C2;font-weight:600;}
+    .dt-levels{display:flex;gap:10px;margin:6px 0 4px;flex-wrap:wrap;}
+    .dt-level{display:flex;flex-direction:column;align-items:center;background:#1A1B1D;border-radius:6px;padding:4px 8px;min-width:60px;}
+    .dt-lab{font-size:9px;color:#8C8D90;text-transform:uppercase;letter-spacing:.05em;}
+    .dt-val{font-size:12px;font-family:'IBM Plex Mono',monospace;font-weight:600;color:#ECEAE5;}
+    .dt-val.pos{color:#5FAE7C;}.dt-val.neg{color:#C9695A;}
+  `;
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("style", null, CSS), screen === "setup" && /*#__PURE__*/React.createElement(Shell, {
+    ch: /*#__PURE__*/React.createElement(Setup, {
+      onDone: setup
+    })
+  }), screen === "login" && /*#__PURE__*/React.createElement(Shell, {
+    ch: /*#__PURE__*/React.createElement(Login, {
+      onSubmit: login,
+      onReset: reset
+    })
+  }), screen === "loading" && /*#__PURE__*/React.createElement(Shell, {
+    ch: /*#__PURE__*/React.createElement("p", {
+      style: {
+        color: "#8C8D90",
+        fontSize: 14
+      }
+    }, "Verbindung …")
+  }), screen === "dashboard" && /*#__PURE__*/React.createElement(Dashboard, {
+    onLogout: () => setScreen("login"),
+    ok: ok,
+    onFail: () => setOk(false)
+  }));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));</script>
+<script>
+(function(){
+  var root=document.getElementById("root"),boot=document.getElementById("boot");
+  var obs=new MutationObserver(function(){if(root.children.length>0){boot.style.display="none";obs.disconnect();}});
+  obs.observe(root,{childList:true,subtree:true});
+  setTimeout(function(){if(root.children.length===0)boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – Strg+Shift+R';},12000);
+})();
+</script>
+</body>
+</html>
