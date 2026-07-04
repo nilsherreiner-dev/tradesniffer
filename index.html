@@ -875,7 +875,8 @@ function Sparkline({
 /* ---- Widget: KI-Recherche ---- */
 function WAI({
   analysis,
-  loading
+  loading,
+  aiError
 }) {
   if (loading) return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
     icon: /*#__PURE__*/React.createElement(Stars, {
@@ -898,14 +899,21 @@ function WAI({
       s: 16
     }),
     title: "KI-Analyse",
-    sub: "Auf Aktualisieren tippen ↺"
-  }), /*#__PURE__*/React.createElement("p", {
+    sub: "Auf ↺ tippen zum Starten"
+  }), aiError ? /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: "#C9695A",
+      lineHeight: 1.5,
+      margin: 0
+    }
+  }, "⚠ Fehler: ", aiError) : /*#__PURE__*/React.createElement("p", {
     className: "wmuted",
     style: {
       fontSize: 13,
       lineHeight: 1.5
     }
-  }, "KI-Analyse lädt nach dem Aktualisieren.", /*#__PURE__*/React.createElement("br", null), "Kurse sind bereits live im Ticker."));
+  }, "Tippe auf ↺ (oben rechts) um die KI-Analyse zu starten. Kurse laufen bereits live."));
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(WHead, {
     icon: /*#__PURE__*/React.createElement(Stars, {
       s: 16
@@ -989,7 +997,8 @@ function WNews({
 function WPortfolio({
   quotes,
   loading,
-  myPositions
+  myPositions,
+  onOpenPortfolio
 }) {
   const hasPositions = myPositions?.length > 0;
   const plData = hasPositions ? myPositions.map(p => calcPL(p, quotes)).filter(Boolean) : [];
@@ -1024,7 +1033,19 @@ function WPortfolio({
     className: "spk"
   }, /*#__PURE__*/React.createElement(Sparkline, {
     data: [100, 102, 98, 105, 103, 108, 112, 109, 115, 118]
-  }))));
+  }))), /*#__PURE__*/React.createElement("button", {
+    className: "pm-btn",
+    style: {
+      marginTop: "auto",
+      fontSize: 11,
+      padding: "4px 10px",
+      opacity: .7
+    },
+    onClick: e => {
+      e.stopPropagation();
+      onOpenPortfolio && onOpenPortfolio();
+    }
+  }, "💼 Positionen verwalten"));
 }
 
 /* ---- Widget: Watchlist ---- */
@@ -1880,6 +1901,7 @@ function Dashboard({
   const [analysis, setAnalysis] = useState(null);
   const [quotesLoading, setQuotesLoading] = useState(true);
   const [expandedType, setExpandedType] = useState(null);
+  const [aiError, setAiError] = useState(null);
   const [myPositions, setMyPositions] = useState([]);
   const [showPortfolioMgr, setShowPortfolioMgr] = useState(false);
   const [aiLoading, setAiLoading] = useState(true);
@@ -1959,10 +1981,11 @@ function Dashboard({
     setQuotesLoading(true);
     setAiLoading(true);
 
-    // Phase 1: Kurse sofort laden und anzeigen (schnell ~1-2s)
+    // Phase 1: Kurse sofort laden
+    let freshQuotes = {};
     try {
-      const q = await fetchAllQuotes();
-      setQuotes(q);
+      freshQuotes = await fetchAllQuotes();
+      setQuotes(freshQuotes);
       setLastUpdate(new Date().toLocaleTimeString("de-DE", {
         hour: "2-digit",
         minute: "2-digit"
@@ -1981,12 +2004,14 @@ function Dashboard({
       console.warn("News fehlgeschlagen:", e);
     }
 
-    // Phase 3: KI-Analyse im Hintergrund (langsam ~10-20s)
+    // Phase 3: KI-Analyse
+    setAiError(null);
     try {
-      const ai = await analyzeWithClaude(news, quotes, myPositions);
+      const ai = await analyzeWithClaude(news, freshQuotes, myPositions);
       setAnalysis(ai);
     } catch (e) {
       console.warn("KI-Analyse fehlgeschlagen:", e);
+      setAiError(e.message || "Unbekannter Fehler");
     }
     setAiLoading(false);
     setDataLoading(false);
@@ -2025,7 +2050,9 @@ function Dashboard({
     analysis,
     loading: aiLoading,
     quotesLoading,
-    myPositions
+    myPositions,
+    aiError,
+    onOpenPortfolio: () => setShowPortfolioMgr(true)
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "dsh"
@@ -2366,13 +2393,14 @@ function App() {
     onFail: () => setOk(false)
   }));
 }
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));</script>
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(ErrorBoundary, null, React.createElement(App, null)));
+</script>
 <script>
 (function(){
   var root=document.getElementById("root"),boot=document.getElementById("boot");
   var obs=new MutationObserver(function(){if(root.children.length>0){boot.style.display="none";obs.disconnect();}});
   obs.observe(root,{childList:true,subtree:true});
-  setTimeout(function(){if(root.children.length===0)boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen – Strg+Shift+R';},12000);
+  setTimeout(function(){if(root.children.length===0)boot.querySelector('#boot-msg').textContent='Laden fehlgeschlagen';},12000);
 })();
 </script>
 </body>
